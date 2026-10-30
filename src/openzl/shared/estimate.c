@@ -1,6 +1,7 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 #include "openzl/shared/estimate.h"
+#include "openzl/shared/estimate_hashed.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -15,11 +16,6 @@
 #include "openzl/shared/portability.h"
 #include "openzl/shared/utils.h"
 #include "openzl/shared/xxhash.h"
-
-typedef struct {
-    size_t sizeLog;
-    uint8_t* bits;
-} LinearCount;
 
 static double LinearCount_estimateValue(size_t nbZeros, size_t nbBuckets)
 {
@@ -86,12 +82,6 @@ static uint64_t LinearCount_hash(uint64_t value)
     return hash ^ (hash << 47);
 }
 
-static void LinearCount_bump(LinearCount* lc, uint64_t hash)
-{
-    size_t const index = (size_t)(hash >> (sizeof(hash) * 8 - lc->sizeLog));
-    lc->bits[index]    = 1;
-}
-
 static size_t LinearCount_nbZeros(LinearCount const* lc)
 {
     size_t nbZeros = 0;
@@ -142,13 +132,7 @@ static ZL_CardinalityEstimate TinyLinearCount_estimate(
 // in very large cardinalities. We choose to optimize for accuracy over
 // speed in this case.
 
-#define HLL_BUCKET_LOG 10
-#define HLL_NB_BUCKETS (1 << HLL_BUCKET_LOG)
 #define HLL_ALPHA (0.7213 / (1.0 + (1.079 / (double)HLL_NB_BUCKETS)))
-
-typedef struct {
-    uint32_t buckets[HLL_NB_BUCKETS];
-} HyperLogLog;
 
 static void HyperLogLog_init(HyperLogLog* hll)
 {
@@ -162,13 +146,6 @@ static uint64_t HyperLogLog_hash(uint64_t value)
     uint8_t littleEndian[sizeof(value)];
     ZL_writeLE64(littleEndian, value);
     return XXH3_64bits(littleEndian, sizeof(littleEndian));
-}
-
-static void HyperLogLog_bump(HyperLogLog* hll, uint64_t hash)
-{
-    size_t const bucket = (size_t)(hash >> (sizeof(hash) * 8 - HLL_BUCKET_LOG));
-    uint64_t const update = hash & ~(hash - 1);
-    hll->buckets[bucket] |= (uint32_t)update;
 }
 
 #if 0
@@ -470,11 +447,6 @@ ZL_CardinalityEstimate ZL_estimateCardinality_fixed(
     return ZS_CardinalityEstimate_fixup(estimate, upperBound);
 }
 
-enum {
-    HASHED_LINEAR_COUNT_SIZE_LOG = 13,
-    HASHED_LINEAR_COUNT_BUCKETS  = 1 << HASHED_LINEAR_COUNT_SIZE_LOG,
-};
-
 /*
  * The hashed estimator's trained feature contract rounds LinearCount to the
  * nearest integer. The general structured estimator intentionally truncates.
@@ -492,6 +464,23 @@ static uint64_t LinearCount_estimateRounded(size_t nbZeros, size_t nbBuckets)
     return (uint64_t)(LinearCount_estimateValue(nbZeros, nbBuckets) + 0.5);
 }
 
+uint64_t ZL_finishHashedLinearCount(LinearCount const* count)
+{
+    return LinearCount_estimateRounded(
+            LinearCount_nbZeros(count), HASHED_LINEAR_COUNT_BUCKETS);
+}
+
+uint64_t ZL_finishHashedHyperLogLog(HyperLogLog const* hll)
+{
+    size_t const nbZeros = HyperLogLog_nbZeros(hll);
+    /* The linear-count correction rounds; the full HLL estimate truncates. */
+    return nbZeros > 0
+            ? LinearCount_estimateRounded(nbZeros, HLL_NB_BUCKETS)
+            : HyperLogLog_estimateImpl(
+                      HLL_NB_BUCKETS, HyperLogLog_harmonicMean(hll), HLL_ALPHA)
+                      .estimate;
+}
+
 uint64_t ZL_estimateCardinality_hashed(
         void* state,
         size_t nbHashes,
@@ -499,47 +488,12 @@ uint64_t ZL_estimateCardinality_hashed(
         ZL_CardinalityHashFn linearCountHash,
         ZL_CardinalityHashFn hyperLogLogHash)
 {
-    if (nbHashes == 0 || cardinalityUpperBound == 0)
-        return 0;
-
-    ZL_ASSERT(linearCountHash != NULL);
-    ZL_ASSERT(hyperLogLogHash != NULL);
-
-    uint64_t estimate;
-    if (cardinalityUpperBound <= ZL_ESTIMATE_CARDINALITY_16BITS) {
-        /*
-         * Keep a fixed 8192-bucket sketch. Unlike the fixed and variable APIs,
-         * the hashed estimate must not vary its sketch size with the bound.
-         */
-        uint8_t bits[HASHED_LINEAR_COUNT_BUCKETS];
-        LinearCount count;
-        LinearCount_init(&count, bits, HASHED_LINEAR_COUNT_SIZE_LOG);
-        for (size_t i = 0; i < nbHashes; ++i) {
-            LinearCount_bump(&count, linearCountHash(state, i));
-        }
-        estimate = LinearCount_estimateRounded(
-                LinearCount_nbZeros(&count), HASHED_LINEAR_COUNT_BUCKETS);
-    } else {
-        HyperLogLog hll;
-        HyperLogLog_init(&hll);
-        for (size_t i = 0; i < nbHashes; ++i) {
-            HyperLogLog_bump(&hll, hyperLogLogHash(state, i));
-        }
-        size_t const nbZeros = HyperLogLog_nbZeros(&hll);
-        /*
-         * Preserve the trained conversion policy: the LinearCount correction
-         * rounds to nearest, while the full HLL estimate truncates.
-         */
-        estimate = nbZeros > 0
-                ? LinearCount_estimateRounded(nbZeros, HLL_NB_BUCKETS)
-                : HyperLogLog_estimateImpl(
-                          HLL_NB_BUCKETS,
-                          HyperLogLog_harmonicMean(&hll),
-                          HLL_ALPHA)
-                          .estimate;
-    }
-
-    return ZL_MIN(estimate, cardinalityUpperBound);
+    return ZL_estimateCardinality_hashedInline(
+            state,
+            nbHashes,
+            cardinalityUpperBound,
+            linearCountHash,
+            hyperLogLogHash);
 }
 
 static ZL_CardinalityEstimate ZS_estimateLinear_variable_internal(

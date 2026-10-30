@@ -4,7 +4,7 @@
 #include "numeric_stats.h"
 
 #include "openzl/shared/bits.h"
-#include "openzl/shared/estimate.h"
+#include "openzl/shared/estimate_hashed.h"
 #include "openzl/shared/mem.h"
 
 /*
@@ -180,14 +180,14 @@ static uint64_t estimate_bitmap_cardinality(
      * The estimator invokes exactly `distinct` callbacks. Each callback
      * consumes one set bit, so the iterator must end on the final set bit.
      */
-    return ZL_estimateCardinality_hashed(
+    return ZL_estimateCardinality_hashedInline(
             &state, distinct, cardinality_upper_bound, linear_hash, hll_hash);
 }
 
 uint64_t TRS_estimate_cardinality_u64(const uint64_t* data, size_t n_elements)
 {
     ArrayHashState state = { data };
-    return ZL_estimateCardinality_hashed(
+    return ZL_estimateCardinality_hashedInline(
             &state,
             n_elements,
             n_elements,
@@ -198,7 +198,7 @@ uint64_t TRS_estimate_cardinality_u64(const uint64_t* data, size_t n_elements)
 uint64_t TRS_estimate_cardinality_u32(const uint32_t* data, size_t n_elements)
 {
     ArrayHashState state = { data };
-    return ZL_estimateCardinality_hashed(
+    return ZL_estimateCardinality_hashedInline(
             &state,
             n_elements,
             n_elements,
@@ -213,7 +213,7 @@ uint64_t TRS_estimate_pair_cardinality_u64(
     if (n_elements < 2)
         return 0;
     ArrayHashState state = { data };
-    return ZL_estimateCardinality_hashed(
+    return ZL_estimateCardinality_hashedInline(
             &state,
             n_elements - 1,
             n_elements - 1,
@@ -228,7 +228,7 @@ uint64_t TRS_estimate_pair_cardinality_u32(
     if (n_elements < 2)
         return 0;
     ArrayHashState state = { data };
-    return ZL_estimateCardinality_hashed(
+    return ZL_estimateCardinality_hashedInline(
             &state,
             n_elements - 1,
             n_elements - 1,
@@ -292,6 +292,6 @@ uint64_t TRS_estimate_d8_cardinality(
     NumericByteHashState state = { data, elt_width };
     ZL_CardinalityHashFn const hash =
             ZL_isLittleEndian() ? d8_hash : d8_hash_big_endian;
-    return ZL_estimateCardinality_hashed(
+    return ZL_estimateCardinality_hashedInline(
             &state, n_bytes - 7, n_bytes - 7, hash, hash);
 }
