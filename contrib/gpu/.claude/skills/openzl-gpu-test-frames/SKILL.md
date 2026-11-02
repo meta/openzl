@@ -27,7 +27,8 @@ Input in = Input::refNumeric(buf, /*eltWidth=*/2, /*numElts=*/n);
 ```cpp
 // Core minter: applies CParams that DEFEAT the STORE backup (so a hand-picked
 // codec is not silently replaced by raw STORE), selects startGraph, compresses.
-std::string makeFrameWithGraph(Compressor&, GraphID startGraph, const Input&);
+std::string makeFrameWithGraph(
+        Compressor&, GraphID startGraph, const Input&, int formatVersion = ZL_MAX_FORMAT_VERSION);
 
 // Route a node's outputs all to STORE (keeps the node's codec in the frame).
 std::string makeFrameNodeToStore(Compressor&, NodeID node, const Input&);
@@ -79,6 +80,11 @@ std::vector<uint32_t> standardCodecsInFrame(const std::string& frame);
 bool frameHasExactlyCodecs(const std::string& frame, const std::vector<uint32_t>& expected);
 // Per-chunk standard codec IDs; reports every chunk via decompression introspection.
 std::vector<std::vector<uint32_t>> standardCodecsPerChunk(const std::string& frame);
+// Pin a frame's exact decode graph as text (last chunk only).
+std::string decodeGraphSignature(const std::string& frame);
+// Same, with split codecs collapsed: stable across input sizes; drops stored
+// blocks when any block is coded.
+std::string decodeGraphShape(const std::string& frame);
 ```
 
 `standardCodecsInFrame` and `frameHasExactlyCodecs` use the public reflection API, which only exposes the **last chunk** of a frame. For multi-chunk fixtures, use `standardCodecsPerChunk`: it drives the real decompression path with introspection hooks, disables codec fusion on its throwaway `DCtx`, and returns one inner vector per frame chunk. You do not need to re-mint slices just to verify per-chunk codec coverage.
