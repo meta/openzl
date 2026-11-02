@@ -1,6 +1,7 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 #include <gtest/gtest.h>
+#include <cstdint>
 #include <random>
 #include <tuple>
 #include "openzl/common/allocation.h"
@@ -69,6 +70,29 @@ TEST_P(AllocatorTest, allocateBigAndInit)
     // This will crash (asan) if buffer is too small
     memset(ptr, 1, bigSize);
 
+    ALLOC_Arena_free(arena, ptr);
+
+    freeArena(arena);
+}
+
+// Sizes read from corrupted frames can be close to SIZE_MAX:
+// such requests must fail, not wrap around into a small allocation.
+// These margins overflow the arenas' own size computations, even without the
+// ASAN redzones that GCC builds may lack, so the system allocator is never
+// reached (under ASAN, it aborts instead of returning NULL).
+TEST_P(AllocatorTest, allocateHugeFails)
+{
+    auto arena = createArena();
+
+    for (size_t const margin : { 0u, 1u, 14u }) {
+        size_t const hugeSize = SIZE_MAX - margin;
+        EXPECT_EQ(ALLOC_Arena_malloc(arena, hugeSize), nullptr) << margin;
+        EXPECT_EQ(ALLOC_Arena_calloc(arena, hugeSize), nullptr) << margin;
+    }
+
+    // The arena remains usable
+    void* const ptr = ALLOC_Arena_malloc(arena, 100);
+    ASSERT_NE(ptr, nullptr);
     ALLOC_Arena_free(arena, ptr);
 
     freeArena(arena);
@@ -556,6 +580,50 @@ TEST(StackArenaSizingTest, primaryBufferShrinksAfterOneExceptionalSession)
     ALLOC_Arena_freeAll(arena);
 
     EXPECT_LE(steadyStateSize, exceptionalSize / 2);
+
+    ALLOC_Arena_freeArena(arena);
+}
+
+// Slices are 16-byte aligned. Without ASAN redzones, an empty request could get
+// the address right past the end of the Primary Buffer, which free() and
+// realloc() then take for a heap backup pointer.
+TEST(StackArenaSliceTest, emptySliceIsNotPastTheEndOfPrimaryBuffer)
+{
+    Arena* const arena = ALLOC_StackArena_create();
+    ASSERT_NE(arena, nullptr);
+
+    // First session sizes the Primary Buffer
+    ALLOC_Arena_malloc(arena, 100);
+    const size_t capacity = ALLOC_Arena_memAllocated(arena);
+    ALLOC_Arena_freeAll(arena);
+
+    // Leave 15 bytes free, i.e. less than one aligned slot
+    char* const full  = (char*)ALLOC_Arena_malloc(arena, capacity - 15);
+    char* const empty = (char*)ALLOC_Arena_malloc(arena, 0);
+    ASSERT_NE(full, nullptr);
+    ASSERT_NE(empty, nullptr);
+    EXPECT_NE(empty, full + capacity);
+
+    ALLOC_Arena_free(arena, empty);
+    ALLOC_Arena_free(arena, full);
+    ALLOC_Arena_freeArena(arena);
+}
+
+// The first slice of a session must be recorded even when it's empty,
+// otherwise the next request is taken for the first of the session.
+TEST(StackArenaSliceTest, emptyFirstSliceIsRecorded)
+{
+    Arena* const arena = ALLOC_StackArena_create();
+    ASSERT_NE(arena, nullptr);
+
+    ALLOC_Arena_malloc(arena, 100);
+    ALLOC_Arena_freeAll(arena);
+
+    void* const empty = ALLOC_Arena_malloc(arena, 0);
+    void* const next  = ALLOC_Arena_malloc(arena, 64);
+    ASSERT_NE(empty, nullptr);
+    ASSERT_NE(next, nullptr);
+    EXPECT_NE(empty, next);
 
     ALLOC_Arena_freeArena(arena);
 }

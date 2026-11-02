@@ -552,8 +552,12 @@ static void* ALLOC_StackArena_malloc(Arena* arena, size_t requestSize)
     ZL_ASSERT_GE(pba->pBuffCapacity, pba->pBuffUsed);
     size_t pBuffAvailable         = pba->pBuffCapacity - pba->pBuffUsed;
     static const size_t alignment = 16; // could become a variable in the future
-    const size_t size             = requestSize + ZL_REDZONE_SIZE;
-    size_t const neededSize       = size + (alignment - 1);
+    size_t size, neededSize;
+    /* Requests close to SIZE_MAX would wrap around into small slices */
+    if (ZL_overflowAddST(requestSize, ZL_REDZONE_SIZE, &size)
+        || ZL_overflowAddST(size, alignment - 1, &neededSize)) {
+        return NULL;
+    }
     pba->sessionUsage += neededSize;
 
     /* On the first request of a session, resize the primary buffer if it is
@@ -611,10 +615,13 @@ static void* ALLOC_StackArena_malloc(Arena* arena, size_t requestSize)
     }
 
     /* second+ request, or allocation of primary buffer failed */
-    if (pBuffAvailable >= neededSize) {
+    size_t const start = ((pba->pBuffUsed + (alignment - 1)) / alignment)
+            * alignment; /* ensure start position is properly aligned */
+    /* Even an empty slice must start within the primary buffer:
+     * its end address belongs to the heap backup for free() and realloc() */
+    if ((pBuffAvailable >= neededSize)
+        && (start + ZL_MAX(size, 1) <= pba->pBuffCapacity)) {
         /* enough space in primary buffer -> assign a slice */
-        size_t const start = ((pba->pBuffUsed + (alignment - 1)) / alignment)
-                * alignment; /* ensure start position is properly aligned */
         ZL_ASSERT_GE(start, pba->pBuffUsed);
         ZL_ASSERT_LE(start + size, pba->pBuffCapacity);
         ZL_ASSERT_NN(pba->primaryBuffer);
@@ -623,8 +630,11 @@ static void* ALLOC_StackArena_malloc(Arena* arena, size_t requestSize)
                 0); /* note : this alignment method will have to change if
                        requested alignment is larger than base allocation of
                        primaryBuffer */
-        void* const r  = (char*)pba->primaryBuffer + start;
-        pba->pBuffUsed = start + size;
+        void* const r = (char*)pba->primaryBuffer + start;
+        /* The first slice of a session moves pBuffUsed even when empty,
+         * since pBuffUsed == 0 identifies the first request of a session;
+         * that byte fits in the alignment - 1 slack of neededSize */
+        pba->pBuffUsed = start + size + (pba->pBuffUsed == 0);
         ALLOC_StackArena_trackMalloc(pba, r, requestSize);
         return r;
     }
