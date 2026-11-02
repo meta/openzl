@@ -1,0 +1,44 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+
+load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
+load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
+load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
+load("../../../../defs.bzl", "relative_headers")
+
+oncall("data_compression")
+
+cpp_library(
+    # @autodeps-skip
+    name = "decode_binding",
+    srcs = ["decode_binding.cpp"],
+    headers = relative_headers(["decode_binding.hpp"]),
+    header_namespace = "",
+    deps = ["../../../..:zstronglib"],
+    exported_deps = [
+        "../allocation:arena_addresses",
+        "../allocation:storage_requirements",
+        "../common:codec_decode_execution",
+        "../common:result",
+        "../device:device",
+        "../planning:decode_plan",
+        "../planning:decode_planner",
+        "../scheduling:work_schedule",
+    ],
+)
+
+cpp_unittest(
+    # @autodeps-skip
+    name = "decode_binding_test",
+    srcs = ["tests/DecodeBindingTest.cpp"],
+    network_access = network_access_utils.none(),
+    deps = [
+        "../../../..:zstronglib",
+        "../../../../cpp:openzl_cpp",
+        "../../testkit:staged_host_frame",
+        "../../testkit:testkit",
+        "../codecs/float_deconstruct:bf16_test_frames",
+        "../decompress:decompress",
+        "fbsource//third-party/googletest:gtest",
+        ":decode_binding",
+    ],
+)
