@@ -48,6 +48,15 @@ TEST_F(BitsplitFPTest, FP32_RoundTrip)
     testBitsplitFPRoundTrip(input);
 }
 
+TEST_F(BitsplitFPTest, FP32_NegativeRoundTrip)
+{
+    std::vector<float> input(1000);
+    for (size_t i = 0; i < input.size(); i++) {
+        input[i] = static_cast<float>(i) * -0.1f;
+    }
+    testBitsplitFPRoundTrip(input);
+}
+
 TEST_F(BitsplitFPTest, FP32_AllZero)
 {
     std::vector<float> input(1000, 0.0f);
@@ -119,6 +128,15 @@ TEST_F(BitsplitFPTest, FP64_RoundTrip)
     std::vector<double> input(1000);
     for (size_t i = 0; i < input.size(); i++) {
         input[i] = static_cast<double>(i) * 0.1;
+    }
+    testBitsplitFPRoundTrip(input);
+}
+
+TEST_F(BitsplitFPTest, FP64_NegativeRoundTrip)
+{
+    std::vector<double> input(1000);
+    for (size_t i = 0; i < input.size(); i++) {
+        input[i] = static_cast<double>(i) * -0.1;
     }
     testBitsplitFPRoundTrip(input);
 }
@@ -200,6 +218,18 @@ TEST_F(BitsplitFPTest, FP16_RoundTrip)
         // Range from small positive normals to larger ones
         // Exponent field [0x0400..0x7BFF] covers all normal fp16 values
         input[i] = static_cast<uint16_t>(0x0400 + (i % 0x7800));
+    }
+    testBitsplitFPRoundTrip(input);
+}
+
+TEST_F(BitsplitFPTest, FP16_NegativeRoundTrip)
+{
+    // Sweep through a range of negative normal fp16 values
+    std::vector<uint16_t> input(1000);
+    for (size_t i = 0; i < input.size(); i++) {
+        // Range from small negative normals to larger ones
+        // Exponent field [0x0400..0x7BFF] covers all normal fp16 values
+        input[i] = static_cast<uint16_t>(0x8000 | (0x0400 + (i % 0x7800)));
     }
     testBitsplitFPRoundTrip(input);
 }
