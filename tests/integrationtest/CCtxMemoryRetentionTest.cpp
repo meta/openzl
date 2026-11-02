@@ -9,7 +9,6 @@
 #include "openzl/codecs/zl_generic.h"
 #include "openzl/zl_compress.h"
 #include "openzl/zl_compressor.h"
-#include "openzl/zl_data.h"
 #include "openzl/zl_version.h"
 
 #include "openzl/common/limits.h" // ZL_ENCODER_INPUT_LIMIT (internal)
