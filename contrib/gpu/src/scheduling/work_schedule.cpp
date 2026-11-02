@@ -39,13 +39,6 @@ ZL_Report checkScheduledRanges(const DecodePlan& plan)
     return ZL_returnSuccess();
 }
 
-bool sameTransform(
-        const PublicTransformInfo& lhs,
-        const PublicTransformInfo& rhs)
-{
-    return lhs.trt == rhs.trt && lhs.trid == rhs.trid;
-}
-
 /**
  * Reports whether a codec run materializes no storage of its own.
  *
@@ -106,11 +99,8 @@ Result<std::vector<size_t>> assignWavesToCodecRuns(const DecodePlan& plan)
 }
 
 /**
- * Builds dependency-ordered wave buckets from codec run wave assignments.
- *
- * Work groups within a wave retain the order in which their first codec runs
- * appear in the decode plan. Codec runs sharing a transform and wave share a
- * work group.
+ * Builds dependency-ordered wave buckets from codec run wave assignments. The
+ * runs of each wave keep their decode-plan order.
  */
 WorkSchedule buildWaveBuckets(
         const DecodePlan& plan,
@@ -132,23 +122,8 @@ WorkSchedule buildWaveBuckets(
             continue;
         }
 
-        auto& workGroupsInWave =
-                schedule.waves.at(waveByCodecRun.at(codecRunIndex) - 1)
-                        .workGroups;
-        // Add the codec run to this wave's work group for its transform,
-        // creating the work group if needed.
-        auto match = std::find_if(
-                workGroupsInWave.begin(),
-                workGroupsInWave.end(),
-                [&codecRun](const WorkGroup& workGroup) {
-                    return sameTransform(
-                            workGroup.transform, codecRun.transform);
-                });
-        if (match == workGroupsInWave.end()) {
-            workGroupsInWave.push_back({ .transform = codecRun.transform });
-            match = workGroupsInWave.end() - 1;
-        }
-        match->codecRunIndices.push_back(codecRunIndex);
+        schedule.waves.at(waveByCodecRun.at(codecRunIndex) - 1)
+                .codecRunIndices.push_back(codecRunIndex);
     }
     return schedule;
 }

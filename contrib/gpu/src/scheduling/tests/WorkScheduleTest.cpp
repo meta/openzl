@@ -110,19 +110,9 @@ ZL_ErrorCode scheduleErrorCode(const DecodePlan& plan)
 
 const std::vector<PlannedCodecRunIndex>& codecRunsOf(
         const WorkSchedule& schedule,
-        size_t waveIndex,
-        size_t workGroupIndex)
-{
-    return schedule.waves.at(waveIndex)
-            .workGroups.at(workGroupIndex)
-            .codecRunIndices;
-}
-
-const std::vector<WorkGroup>& workGroupsOf(
-        const WorkSchedule& schedule,
         size_t waveIndex)
 {
-    return schedule.waves.at(waveIndex).workGroups;
+    return schedule.waves.at(waveIndex).codecRunIndices;
 }
 
 TEST(WorkScheduleTest, AssignsWavesFromDependencyDepth)
@@ -141,18 +131,15 @@ TEST(WorkScheduleTest, AssignsWavesFromDependencyDepth)
     const WorkSchedule schedule = scheduleOrThrow(plan);
 
     ASSERT_EQ(schedule.waves.size(), 3);
-    ASSERT_EQ(workGroupsOf(schedule, 0).size(), 1);
-    ASSERT_EQ(workGroupsOf(schedule, 1).size(), 1);
-    ASSERT_EQ(workGroupsOf(schedule, 2).size(), 1);
-    EXPECT_EQ(codecRunsOf(schedule, 0, 0), std::vector{ first });
-    EXPECT_EQ(codecRunsOf(schedule, 1, 0), std::vector{ second });
-    EXPECT_EQ(codecRunsOf(schedule, 2, 0), std::vector{ third });
+    EXPECT_EQ(codecRunsOf(schedule, 0), std::vector{ first });
+    EXPECT_EQ(codecRunsOf(schedule, 1), std::vector{ second });
+    EXPECT_EQ(codecRunsOf(schedule, 2), std::vector{ third });
 }
 
-TEST(WorkScheduleTest, BatchesIndependentCodecRunsOfOneTransform)
+TEST(WorkScheduleTest, PutsIndependentCodecRunsInOneWave)
 {
-    // This fails if codec runs sharing a transform and wave are not collapsed
-    // into one launch, which is the schedule's batching contract.
+    // This fails if independent codec runs land in different waves, which
+    // adds a barrier between runs that could execute together.
     DecodePlan plan;
     for (int chunk = 0; chunk < 3; ++chunk) {
         const PlannedCodecRunIndex codecRun = addCodecRun(plan, kCodecA, {});
@@ -162,53 +149,27 @@ TEST(WorkScheduleTest, BatchesIndependentCodecRunsOfOneTransform)
     const WorkSchedule schedule = scheduleOrThrow(plan);
 
     ASSERT_EQ(schedule.waves.size(), 1);
-    ASSERT_EQ(workGroupsOf(schedule, 0).size(), 1);
-    EXPECT_EQ(workGroupsOf(schedule, 0)[0].transform.trid, kCodecA);
     const std::vector<PlannedCodecRunIndex> expected{ 0, 1, 2 };
-    EXPECT_EQ(codecRunsOf(schedule, 0, 0), expected);
-}
-
-TEST(WorkScheduleTest, SplitsWorkGroupsByWaveAndTransform)
-{
-    // This fails if codec runs from different transforms or waves share a
-    // batch, launching a codec over incompatible or unavailable inputs.
-    DecodePlan plan;
-    const PlannedCodecRunIndex a0 = addCodecRun(plan, kCodecA, {});
-    setOutputs(plan, a0, { addStream(plan, a0) });
-    const PlannedCodecRunIndex b0 = addCodecRun(plan, kCodecB, {});
-    setOutputs(plan, b0, { addStream(plan, b0) });
-    const PlannedCodecRunIndex a1 = addCodecRun(plan, kCodecA, { a0 });
-    setOutputs(plan, a1, { addStream(plan, a1) });
-
-    const WorkSchedule schedule = scheduleOrThrow(plan);
-
-    ASSERT_EQ(schedule.waves.size(), 2);
-    const auto& wave0WorkGroups = workGroupsOf(schedule, 0);
-    const auto& wave1WorkGroups = workGroupsOf(schedule, 1);
-    ASSERT_EQ(wave0WorkGroups.size(), 2);
-    ASSERT_EQ(wave1WorkGroups.size(), 1);
-    EXPECT_EQ(wave0WorkGroups[0].transform.trid, kCodecA);
-    EXPECT_EQ(wave0WorkGroups[1].transform.trid, kCodecB);
-    EXPECT_EQ(wave1WorkGroups[0].transform.trid, kCodecA);
+    EXPECT_EQ(codecRunsOf(schedule, 0), expected);
 }
 
 TEST(WorkScheduleTest, PreservesPlanOrderWithinOneWave)
 {
-    // This fails if scheduling imposes a transform priority on independent
-    // work groups instead of retaining their order in the decode plan.
+    // This fails if scheduling groups or reorders the runs of a wave by
+    // transform. The device chooses the batches.
     DecodePlan plan;
+    const PlannedCodecRunIndex a0 = addCodecRun(plan, kCodecA, {});
+    setOutputs(plan, a0, { addStream(plan, a0) });
     const PlannedCodecRunIndex b = addCodecRun(plan, kCodecB, {});
     setOutputs(plan, b, { addStream(plan, b) });
-    const PlannedCodecRunIndex a = addCodecRun(plan, kCodecA, {});
-    setOutputs(plan, a, { addStream(plan, a) });
+    const PlannedCodecRunIndex a1 = addCodecRun(plan, kCodecA, {});
+    setOutputs(plan, a1, { addStream(plan, a1) });
 
     const WorkSchedule schedule = scheduleOrThrow(plan);
 
     ASSERT_EQ(schedule.waves.size(), 1);
-    const auto& workGroups = workGroupsOf(schedule, 0);
-    ASSERT_EQ(workGroups.size(), 2);
-    EXPECT_EQ(workGroups[0].transform.trid, kCodecB);
-    EXPECT_EQ(workGroups[1].transform.trid, kCodecA);
+    const std::vector<PlannedCodecRunIndex> expected{ a0, b, a1 };
+    EXPECT_EQ(codecRunsOf(schedule, 0), expected);
 }
 
 TEST(WorkScheduleTest, LaunchesNothingForAliasingCodecRuns)
@@ -229,15 +190,9 @@ TEST(WorkScheduleTest, LaunchesNothingForAliasingCodecRuns)
     const WorkSchedule schedule = scheduleOrThrow(plan);
 
     ASSERT_EQ(schedule.waves.size(), 2);
-    ASSERT_EQ(workGroupsOf(schedule, 0).size(), 1);
     EXPECT_EQ(schedule.aliasingCodecRunIndices, std::vector{ view });
-    ASSERT_EQ(workGroupsOf(schedule, 1).size(), 1);
-    EXPECT_EQ(
-            codecRunsOf(schedule, 0, 0),
-            std::vector<PlannedCodecRunIndex>{ source });
-    EXPECT_EQ(
-            codecRunsOf(schedule, 1, 0),
-            std::vector<PlannedCodecRunIndex>{ consumer });
+    EXPECT_EQ(codecRunsOf(schedule, 0), std::vector{ source });
+    EXPECT_EQ(codecRunsOf(schedule, 1), std::vector{ consumer });
 }
 
 TEST(WorkScheduleTest, LaunchesAliasedOutputsThatStillNeedLengthStorage)
@@ -255,10 +210,7 @@ TEST(WorkScheduleTest, LaunchesAliasedOutputsThatStillNeedLengthStorage)
     const WorkSchedule schedule = scheduleOrThrow(plan);
 
     ASSERT_EQ(schedule.waves.size(), 2);
-    ASSERT_EQ(workGroupsOf(schedule, 1).size(), 1);
-    EXPECT_EQ(
-            codecRunsOf(schedule, 1, 0),
-            std::vector<PlannedCodecRunIndex>{ view });
+    EXPECT_EQ(codecRunsOf(schedule, 1), std::vector{ view });
 }
 
 TEST(WorkScheduleTest, RejectsDependencyOnALaterCodecRun)
@@ -305,8 +257,8 @@ TEST(WorkScheduleTest, RejectsOutputOfAnUnknownStream)
 
 TEST(WorkScheduleTest, SchedulesNothingForAnEmptyPlan)
 {
-    // This fails if an empty batch produces a work group, which submission
-    // would then launch over zero streams.
+    // This fails if an empty plan produces a wave, which the executor would
+    // then launch with no runs.
     const WorkSchedule schedule = scheduleOrThrow(DecodePlan{});
 
     EXPECT_TRUE(schedule.waves.empty());

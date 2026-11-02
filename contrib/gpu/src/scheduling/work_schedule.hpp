@@ -10,32 +10,19 @@
 namespace openzl::gpu {
 
 /**
- * One batch of dependency-ready planned codec runs sharing a wire transform.
+ * Codec runs that may execute after every earlier wave has completed.
  *
- * A work group is the coarsest unit over which one codec can be invoked. Work
- * groups are never empty.
+ * The runs of one wave are independent of each other, so the executor may
+ * launch them in any grouping. It must complete the entire wave before it
+ * launches the next one. Waves are never empty.
  */
-struct WorkGroup {
-    /// Wire transform shared by every referenced @c PlannedCodecRun.
-    PublicTransformInfo transform;
-    /// Indices of the @c DecodePlan::codecRuns batched into this work group.
+struct WorkWave {
+    /// Indices of the @c DecodePlan::codecRuns in this wave, in plan order.
     std::vector<PlannedCodecRunIndex> codecRunIndices;
 };
 
 /**
- * Work groups that may execute after every earlier wave has completed.
- *
- * The executor may launch every work group in a wave independently. It must
- * complete the entire wave before launching the next one. Waves are never
- * empty.
- */
-struct WorkWave {
-    /// Work groups that may execute independently within this wave.
-    std::vector<WorkGroup> workGroups;
-};
-
-/**
- * Batched execution order derived from a decode plan's dependency graph.
+ * Execution order derived from a decode plan's dependency graph.
  *
  * Each codec run's wave exceeds every producer codec run it depends on.
  * Aliasing codec runs, whose outputs are all backed by existing storage, are
@@ -50,11 +37,11 @@ struct WorkSchedule {
 };
 
 /**
- * Assigns topological waves and batches codec runs into work groups.
+ * Assigns each codec run to a topological wave.
  *
- * Reads only each codec run's dependencies, transform, and output stream
- * storage facts. Input streams, codec headers, and other size information are
- * not consulted.
+ * It reads only each codec run's dependencies and the storage facts of its
+ * output streams. It does not read input streams, transforms, codec headers,
+ * or sizes.
  *
  * @param plan Decode graph whose codec runs precede their dependents.
  * @returns The work schedule, @c corruption if a range or stream index in
