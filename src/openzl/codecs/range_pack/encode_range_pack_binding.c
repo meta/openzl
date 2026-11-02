@@ -23,6 +23,7 @@ ZL_Report EI_rangePack(ZL_Encoder* eictx, const ZL_Input* ins[], size_t nbIns)
     void const* src       = ZL_Input_ptr(in);
     size_t const srcWidth = ZL_Input_eltWidth(in);
     size_t const nbElts   = ZL_Input_numElts(in);
+    ZL_ASSERT(ZL_isLegalIntegerWidth(srcWidth));
     ZL_ElementRange const range =
             ZL_computeUnsignedRange(src, nbElts, srcWidth);
     // The decoder adds back any value up to the minimum.
@@ -47,7 +48,8 @@ ZL_Report EI_rangePack(ZL_Encoder* eictx, const ZL_Input* ins[], size_t nbIns)
     size_t header_size = 1;
     header[0]          = (uint8_t)srcWidth;
     if (subtracted != 0) {
-        ZL_writeLE64_N(header + 1, subtracted, srcWidth);
+        // Only the first srcWidth bytes are sent
+        ZL_writeLE64(header + 1, subtracted);
         header_size += srcWidth;
     }
     ZL_Encoder_sendCodecHeader(eictx, &header, header_size);
