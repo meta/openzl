@@ -15,8 +15,10 @@ namespace openzl::gpu {
  *
  * The decode context contains the frame graph, stream producers, and stored
  * streams. @c transformHeaders_h contains the codec headers used during
- * planning. It must remain valid until planning returns. The decode context
- * and its frame storage must remain valid until the plan finishes executing.
+ * planning. It must remain valid until planning returns, and while a
+ * @c DecodeInfo or @c BoundDecode built from the chunk is in use, because their
+ * codec headers point into it. The decode context and its frame storage must
+ * remain valid until the plan finishes executing.
  */
 struct PreparedGpuChunkView {
     /// Non-null prepared context with frame, producer, and stream metadata.

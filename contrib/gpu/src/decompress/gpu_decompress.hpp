@@ -8,6 +8,7 @@
 #include "contrib/gpu/src/common/result.hpp"
 #include "contrib/gpu/src/decompress/gpu_decompress.h"
 #include "contrib/gpu/src/device/device.hpp"
+#include "contrib/gpu/src/planning/decode_planner.hpp"
 #include "openzl/cpp/DCtx.hpp"
 #include "openzl/cpp/poly/Span.hpp"
 #include "openzl/zl_errors.h"
@@ -64,6 +65,9 @@ Result<std::vector<PreparedGPUChunk>> prepareChunksForPlanning(
         const Stream& stream,
         poly::span<const GPUFrameHeaderForChunks> frameHeaders,
         poly::span<const GPUChunk> chunks);
+
+/// The planner's view of @p chunk, valid while @p chunk is alive and unchanged.
+PreparedGpuChunkView viewOf(PreparedGPUChunk& chunk);
 
 /**
  * Enumerates the chunks in one host-readable frame. A temporary solution until

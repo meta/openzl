@@ -81,6 +81,21 @@ cpp_library(
     exported_deps = ["../src/device:device"],
 )
 
+# A frame staged for planning on the host memory device, as decompressChunks
+# stages it, for the binding and executor tests.
+cpp_library(
+    # @autodeps-skip
+    name = "staged_host_frame",
+    srcs = ["staged_host_frame.cpp"],
+    headers = relative_headers(["staged_host_frame.h"]),
+    header_namespace = "",
+    deps = [":host_memory_device"],
+    exported_deps = [
+        "../src/decompress:decompress",
+        "../src/device:device",
+    ],
+)
+
 cpp_unittest(
     # @autodeps-skip
     name = "host_memory_device_test",

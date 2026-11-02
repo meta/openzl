@@ -270,6 +270,15 @@ Result<std::vector<PreparedGPUChunk>> prepareChunksForPlanning(
     return result;
 }
 
+PreparedGpuChunkView viewOf(PreparedGPUChunk& chunk)
+{
+    return {
+        .dctx               = chunk.dctx.get(),
+        .transformHeaders_h = chunk.transformHeaders_h,
+        .frameIndex         = chunk.chunk.frameHeaderIdx,
+    };
+}
+
 ZL_Report decompressChunks(
         const Stream& stream,
         void*,
@@ -288,12 +297,7 @@ ZL_Report decompressChunks(
     std::vector<PreparedGpuChunkView> chunkViews;
     chunkViews.reserve(preparedChunks.size());
     for (PreparedGPUChunk& prepared : preparedChunks) {
-        chunkViews.push_back(
-                {
-                        .dctx               = prepared.dctx.get(),
-                        .transformHeaders_h = prepared.transformHeaders_h,
-                        .frameIndex         = prepared.chunk.frameHeaderIdx,
-                });
+        chunkViews.push_back(viewOf(prepared));
     }
     Result<DecodePlan> const planResult = planDecode(chunkViews);
     if (planResult.isError()) {

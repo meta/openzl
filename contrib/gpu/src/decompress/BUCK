@@ -22,15 +22,13 @@ cpp_library(
     ])
     | {"gpu_decompress.h": "gpu_decompress.h", "gpu_decompress.hpp": "gpu_decompress.hpp"},
     header_namespace = "",
-    deps = [
-        "../device:cuda_device",
-        "../planning:decode_planner",
-    ],
+    deps = ["../device:cuda_device"],
     exported_deps = [
         "../../../..:zstronglib",
         "../../../../cpp:openzl_cpp",
         "../common:result",
         "../device:device",
+        "../planning:decode_planner",
     ],
 )
 

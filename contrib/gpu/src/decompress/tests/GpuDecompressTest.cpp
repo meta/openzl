@@ -81,6 +81,23 @@ poly::span<const std::byte> bytes(const std::string& frame)
     };
 }
 
+TEST(GPUDecompressTest, ViewOfGivesThePlannerEveryFieldOfTheChunk)
+{
+    // The planner rejects chunks of more than one frame by frameIndex. This
+    // fails if a view leaves out the chunk's frame, or points at other data.
+    gpu::PreparedGPUChunk chunk{
+        .chunk              = { .frameHeaderIdx = 2 },
+        .transformHeaders_h = std::vector<std::byte>(3),
+    };
+
+    const gpu::PreparedGpuChunkView view = gpu::viewOf(chunk);
+
+    EXPECT_EQ(view.dctx, chunk.dctx.get());
+    EXPECT_EQ(view.transformHeaders_h.data(), chunk.transformHeaders_h.data());
+    EXPECT_EQ(view.transformHeaders_h.size(), 3);
+    EXPECT_EQ(view.frameIndex, 2);
+}
+
 TEST(GPUDecompressTest, CollectGPUChunksFromFrameEnumeratesEveryChunk)
 {
     // This test verifies that one frame produces an ordered descriptor for
