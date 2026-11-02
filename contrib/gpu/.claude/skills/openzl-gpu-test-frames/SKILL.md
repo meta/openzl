@@ -79,6 +79,10 @@ std::vector<uint32_t> standardCodecsInFrame(const std::string& frame);
 bool frameHasExactlyCodecs(const std::string& frame, const std::vector<uint32_t>& expected);
 // Per-chunk standard codec IDs; reports every chunk via decompression introspection.
 std::vector<std::vector<uint32_t>> standardCodecsPerChunk(const std::string& frame);
+// Text decode graph of the last chunk, for tests that pin a graph.
+std::string decodeGraphSignature(const std::string& frame);
+// Same, with split codecs collapsed and stored blocks dropped.
+std::string decodeGraphShape(const std::string& frame);
 ```
 
 `standardCodecsInFrame` and `frameHasExactlyCodecs` use the public reflection API, which only exposes the **last chunk** of a frame. For multi-chunk fixtures, use `standardCodecsPerChunk`: it drives the real decompression path with introspection hooks, disables codec fusion on its throwaway `DCtx`, and returns one inner vector per frame chunk. You do not need to re-mint slices just to verify per-chunk codec coverage.
