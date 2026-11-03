@@ -54,6 +54,13 @@ ZL_TensorClass ZL_TensorGraphs_refineClass(
 ZL_RESULT_OF(ZL_GraphID)
 ZL_TensorGraphs_registerScale16Graph(ZL_Compressor* compressor);
 
+/// Registers the graph of ZL_TensorClass_upcast32, which codes float32 values
+/// converted from bfloat16 as bfloat16 values, and entropy codes the bytes of
+/// the fraction of the others. Later calls on the same compressor return the
+/// same graph.
+ZL_RESULT_OF(ZL_GraphID)
+ZL_TensorGraphs_registerUpcast32Graph(ZL_Compressor* compressor);
+
 /// Fills @p successors with the default graph of each class. They are ACE
 /// graphs, so that training can replace them. @p scale16 is the graph of
 /// ZL_TensorGraphs_registerScale16Graph(), which parsers can also use inside

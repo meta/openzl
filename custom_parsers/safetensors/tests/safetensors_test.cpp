@@ -801,6 +801,39 @@ TEST_F(SafetensorsCompressorTest, CodesUpcastFloat32NearTheir16BitSize)
     EXPECT_LT(bf16Size, nativeSize / 2);
 }
 
+TEST_F(SafetensorsCompressorTest, CodesFloat32FromBfloat16AsBfloat16)
+{
+    const std::vector<uint64_t> shape = { 64, 512 };
+    const std::string f32             = gaussianF32(64 * 512, 0xffff);
+    std::string bf16;
+    for (size_t i = 0; i < f32.size(); i += 4) {
+        bf16.append(f32, i + 2, 2);
+    }
+    std::string almost = f32;
+    almost[4 * 1000]   = 1;
+    // 40 values over a range of 117 bfloat16 values.
+    std::string narrow(4 * 256, '\0');
+    for (size_t i = 0; i < 256; ++i) {
+        const uint32_t bits = (0x3F80u + 3 * (uint32_t)(i % 40)) << 16;
+        memcpy(&narrow[4 * i], &bits, 4);
+    }
+    useChunkSize(ZL_SAFETENSORS_DEFAULT_CHUNK_SIZE);
+
+    const size_t bf16Size =
+            expectRoundTrip(buildSafetensors({ { "w", "BF16", shape, bf16 } }));
+    const size_t f32Size =
+            expectRoundTrip(buildSafetensors({ { "w", "F32", shape, f32 } }));
+    // A single low bit set sends the tensor to the float32 graph.
+    const size_t almostSize = expectRoundTrip(
+            buildSafetensors({ { "w", "F32", shape, almost } }));
+
+    // A range below 256 values would not fit the bfloat16 graph.
+    expectRoundTrip(buildSafetensors({ { "n", "F32", { 256 }, narrow } }));
+
+    EXPECT_LE(f32Size, bf16Size + 32);
+    EXPECT_GT(almostSize, f32Size);
+}
+
 TEST_F(SafetensorsCompressorTest, TransposesTheBytesOfFloat16Tensors)
 {
     const auto f16 = buildSafetensors(
