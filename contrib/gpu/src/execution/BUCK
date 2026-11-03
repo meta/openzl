@@ -26,6 +26,28 @@ cpp_library(
     ],
 )
 
+cpp_library(
+    # @autodeps-skip
+    name = "decode_executor",
+    srcs = ["decode_executor.cpp"],
+    headers = relative_headers(["decode_executor.hpp"]),
+    header_namespace = "",
+    deps = [
+        "../../../..:zstronglib",
+        "../allocation:decode_resources",
+        "../scheduling:work_schedule",
+    ],
+    exported_deps = [
+        "../allocation:monotonic_layout",
+        "../allocation:storage_requirements",
+        "../common:result",
+        "../device:device",
+        "../planning:decode_plan",
+        "../planning:decode_planner",
+        ":decode_binding",
+    ],
+)
+
 cpp_unittest(
     # @autodeps-skip
     name = "decode_binding_test",
@@ -40,5 +62,22 @@ cpp_unittest(
         "../decompress:decompress",
         "fbsource//third-party/googletest:gtest",
         ":decode_binding",
+    ],
+)
+
+cpp_unittest(
+    # @autodeps-skip
+    name = "decode_executor_test",
+    srcs = ["tests/DecodeExecutorTest.cpp"],
+    network_access = network_access_utils.none(),
+    deps = [
+        "../../../..:zstronglib",
+        "../../../../cpp:openzl_cpp",
+        "../../testkit:host_memory_device",
+        "../../testkit:staged_host_frame",
+        "../../testkit:testkit",
+        "../decompress:decompress",
+        "fbsource//third-party/googletest:gtest",
+        ":decode_executor",
     ],
 )

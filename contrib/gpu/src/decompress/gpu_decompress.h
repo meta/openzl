@@ -22,6 +22,9 @@ extern "C" {
  * are device pointers; the decode is enqueued on @p stream and may run
  * asynchronously with respect to the host.
  *
+ * It decodes only a frame with one serial output. Any other frame returns
+ * `temporaryLibraryLimitation`.
+ *
  * @note Only frame format version 21 and newer is supported.
  *
  * @param dst_d Device buffer that receives the decompressed output.

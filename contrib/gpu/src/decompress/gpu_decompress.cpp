@@ -10,12 +10,15 @@
 #include "contrib/gpu/src/decompress/gpu_decompress.hpp"
 #include "contrib/gpu/src/device/cuda_device.hpp"
 #include "contrib/gpu/src/device/device.hpp"
+#include "contrib/gpu/src/execution/decode_executor.hpp"
+#include "contrib/gpu/src/planning/decode_plan.hpp"
 #include "contrib/gpu/src/planning/decode_planner.hpp"
 #include "openzl/common/errors_internal.h"
 #include "openzl/cpp/DCtx.hpp"
 #include "openzl/cpp/poly/Span.hpp"
 #include "openzl/decompress/dctx2.h"
 #include "openzl/shared/overflow.h"
+#include "openzl/zl_data.h"
 #include "openzl/zl_decompress.h"
 #include "openzl/zl_version.h"
 
@@ -248,6 +251,26 @@ ZL_Report copyTransformHeadersToHost(
     return ZL_returnSuccess();
 }
 
+/**
+ * The caller's buffer receives the bytes of an output but not its type, so GPU
+ * decoding does not support a typed output yet. The caller decodes such a frame
+ * on the CPU.
+ */
+ZL_Report requireSerialOutputs(const DecodePlan& plan)
+{
+    ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
+    for (size_t c = 0; c < plan.chunks.size(); ++c) {
+        for (size_t o = 0; o < plan.numFinalOutputsOf(c); ++o) {
+            ZL_ERR_IF_NE(
+                    plan.streams.at(plan.finalOutputOf(c, o)).shape.type,
+                    ZL_Type_serial,
+                    temporaryLibraryLimitation,
+                    "GPU decoding supports serial outputs only");
+        }
+    }
+    return ZL_returnSuccess();
+}
+
 } // namespace
 
 Result<std::vector<PreparedGPUChunk>> prepareChunksForPlanning(
@@ -281,8 +304,8 @@ PreparedGpuChunkView viewOf(PreparedGPUChunk& chunk)
 
 ZL_Report decompressChunks(
         const Stream& stream,
-        void*,
-        size_t,
+        void* dst_d,
+        size_t dstCapacity,
         poly::span<const GPUFrameHeaderForChunks> frameHeaders,
         poly::span<const GPUChunk> chunks)
 {
@@ -299,11 +322,12 @@ ZL_Report decompressChunks(
     for (PreparedGPUChunk& prepared : preparedChunks) {
         chunkViews.push_back(viewOf(prepared));
     }
-    Result<DecodePlan> const planResult = planDecode(chunkViews);
-    if (planResult.isError()) {
-        return planResult.report();
-    }
-    ZL_ERR(GENERIC, "GPU decompression is not implemented");
+    Result<PlannedDecode> const decode =
+            planDecodeExecution(stream.device(), chunkViews);
+    ZL_ERR_IF_ERR(decode.report());
+    ZL_ERR_IF_ERR(requireSerialOutputs(decode.value().plan));
+    return enqueueDecode(
+            stream, decode.value(), chunkViews, dst_d, dstCapacity);
 }
 
 namespace {
