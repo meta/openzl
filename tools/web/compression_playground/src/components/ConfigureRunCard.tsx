@@ -32,6 +32,7 @@ import {
   OPENZL_LEVELS,
   getOpenZlProfiles,
   TRAINED_CANDIDATE_COUNTS,
+  TRAIN_TIME_SECS,
   isTrainableProfile,
   levelsFor,
   tickLabelLeft,
@@ -40,6 +41,7 @@ import {
   type OpenZlProfile,
   type GzipRow,
   type OpenZlRow,
+  type TrainTimeSecs,
   type ZstdRow,
 } from '../compressors.ts';
 import type {CompressorRows, PatchRow} from '../useCompressorRows.ts';
@@ -190,6 +192,49 @@ function OpenZlOptions({row, position, onPatch}: OpenZlRowProps) {
                   <NativeSelect.Indicator />
                 </NativeSelect.Root>
               </Box>
+            </Box>
+
+            <Box display="flex" alignItems="center" justifyContent="flex-end" gap="8px">
+              <Text color="pg.faint" fontSize="11px" fontWeight="semibold" textAlign="right" m={0}>
+                TRAINING TIME BUDGET
+              </Text>
+              <Tooltip.Root openDelay={200} positioning={{placement: 'top', gutter: 8}}>
+                <NativeSelect.Root width="96px" flexShrink={0} disabled={!row.trainRequested || !canTrain}>
+                  <Tooltip.Trigger asChild>
+                    <NativeSelect.Field
+                      aria-label={`Training time budget for row ${position}`}
+                      height="28px"
+                      fontSize="12px"
+                      bg="pg.surface"
+                      borderColor="pg.border"
+                      borderRadius="6px"
+                      value={row.maxTrainTimeSecs}
+                      onChange={(event) =>
+                        onPatch(row.id, row.compressor, {
+                          maxTrainTimeSecs: Number(event.target.value) as TrainTimeSecs,
+                        })
+                      }>
+                      {TRAIN_TIME_SECS.map((secs) => (
+                        <option key={secs} value={secs}>
+                          {secs} sec
+                        </option>
+                      ))}
+                    </NativeSelect.Field>
+                  </Tooltip.Trigger>
+                  <NativeSelect.Indicator />
+                </NativeSelect.Root>
+                <Portal>
+                  <Tooltip.Positioner>
+                    <Tooltip.Content css={helperTooltip.content}>
+                      <Tooltip.Arrow>
+                        <Tooltip.ArrowTip css={helperTooltip.arrowTip} />
+                      </Tooltip.Arrow>
+                      Training may run longer than this budget. More time may improve compression, with diminishing
+                      returns.
+                    </Tooltip.Content>
+                  </Tooltip.Positioner>
+                </Portal>
+              </Tooltip.Root>
             </Box>
 
             <Box

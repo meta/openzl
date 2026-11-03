@@ -176,7 +176,10 @@ describe('Compression Playground', () => {
     expect(runBenchmark).toHaveBeenCalledWith(
       expect.objectContaining({
         compressors: expect.arrayContaining([
-          expect.objectContaining({profile: 'serial', training: {paretoFrontier: true, candidates: 6}}),
+          expect.objectContaining({
+            profile: 'serial',
+            training: {paretoFrontier: true, candidates: 6, maxTimeSecs: 30},
+          }),
         ]),
       }),
       expect.any(Function),

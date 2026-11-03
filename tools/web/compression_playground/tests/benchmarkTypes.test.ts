@@ -25,7 +25,7 @@ describe('toCompressorConfig', () => {
       compressor: 'OpenZL',
       levels: [6],
       profile: 'serial',
-      training: {paretoFrontier: true, candidates: 7},
+      training: {paretoFrontier: true, candidates: 7, maxTimeSecs: 30},
     });
   });
 

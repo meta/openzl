@@ -22,8 +22,10 @@ void openzl_wasm_free(void* buf);
  * can run longer.
  *
  * More time allows for a slightly better compressor with diminishing returns.
+ *
+ * Keep in sync with DEFAULT_TRAIN_TIME_SECS in the compression playground UI.
  */
-#define OPENZL_WASM_TRAIN_DEFAULT_MAX_TIME_SECS 300
+#define OPENZL_WASM_TRAIN_DEFAULT_MAX_TIME_SECS 30
 
 /**
  * Max threads the trainer will use.
