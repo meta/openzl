@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include "openzl/cpp/CCtx.hpp"
+#include "openzl/cpp/DCtx.hpp"
 #include "openzl/cpp/codecs/ACE.hpp"
 #include "openzl/zl_compressor.h"
 #include "tools/training/ace/ace.h"
@@ -242,6 +243,41 @@ TEST_F(ACETest, SerializeDeserialize)
         testRoundTrip(buildRandomCompressor(
                 rng, type, ZL_MAX_FORMAT_VERSION, kDefaultMaxDepth));
     }
+}
+
+TEST_F(ACETest, PrebuiltNumericQuantizers)
+{
+    const auto prebuilt = getPrebuiltCompressors(Type::Numeric);
+    const auto findRoot = [&](const ACENode& node) {
+        return std::find_if(
+                prebuilt.begin(), prebuilt.end(), [&](const auto& compressor) {
+                    return compressor.isNode()
+                            && compressor.asNode().node.name == node.name;
+                });
+    };
+    const auto lengths = findRoot(ACENode(nodes::QuantizeLengths{}));
+    const auto offsets = findRoot(ACENode(nodes::QuantizeOffsets{}));
+    ASSERT_NE(lengths, prebuilt.end()) << "Missing QuantizeLengths candidate";
+    ASSERT_NE(offsets, prebuilt.end()) << "Missing QuantizeOffsets candidate";
+
+    // Include zero, small lengths, and values that need extra bits.
+    const std::vector<uint32_t> data = {
+        0, 1, 2, 3, 4, 15, 16, 17, 31, 32, 63, 64, 255, 256, 65535, 65536
+    };
+    const auto input = Input::refNumeric(poly::span<const uint32_t>(data));
+    auto lengthsCompressor =
+            lengths->buildBenchmarkCompressor(ZL_MAX_FORMAT_VERSION, 0);
+    CCtx cctx;
+    cctx.refCompressor(lengthsCompressor);
+    const auto compressed = cctx.compressOne(input);
+    DCtx dctx;
+    EXPECT_EQ(dctx.decompressOne(compressed), input);
+
+    // Offsets remain a distinct candidate with a nonzero-only domain.
+    auto offsetsCompressor =
+            offsets->buildBenchmarkCompressor(ZL_MAX_FORMAT_VERSION, 0);
+    cctx.refCompressor(offsetsCompressor);
+    EXPECT_THROW(cctx.compressOne(input), Exception);
 }
 
 TEST_F(ACETest, TripleDeltaNumeric)
