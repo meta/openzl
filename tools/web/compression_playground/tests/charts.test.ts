@@ -19,24 +19,65 @@ function result(
     decompressMBps: 200,
     candidate: null,
     ...metrics,
-    job: {id: 'j', rowId: 1, level: 1, iterations: 1, profile: 'serial', training: null, ...job} as BenchmarkJob,
+    job: {
+      id: `${job.rowId ?? 1}-${job.compressor}-${job.level ?? 1}`,
+      rowId: 1,
+      level: 1,
+      iterations: 1,
+      profile: 'serial',
+      training: null,
+      ...job,
+    } as BenchmarkJob,
   };
 }
 
 describe('buildSeries', () => {
-  it('draws one line per codec, not per compressor row', () => {
-    // Two OpenZL rows share a colour, so two lines would be indistinguishable.
+  it.each(['compressMBps', 'decompressMBps'] as const)('leaves untrained OpenZL jobs as points on %s', (axis) => {
     const series = buildSeries(
       [
-        result({compressor: 'OpenZL', rowId: 1}),
-        result({compressor: 'OpenZL', rowId: 4}),
-        result({compressor: 'zstd', rowId: 2}),
+        result({id: 'untrained-1', compressor: 'OpenZL', rowId: 1}),
+        result({id: 'untrained-4', compressor: 'OpenZL', rowId: 4}),
+      ],
+      axis,
+    );
+
+    expect(series.size).toBe(2);
+    for (const one of series.values()) {
+      expect(one.compressor).toBe('OpenZL');
+      expect(one.points).toHaveLength(1);
+    }
+  });
+
+  it('keeps trained OpenZL frontiers separate from other jobs', () => {
+    const first = {
+      id: 'trained-1',
+      rowId: 1,
+      compressor: 'OpenZL',
+      training: {paretoFrontier: true, candidates: 6},
+    } as const;
+    const second = {...first, id: 'trained-4', rowId: 4};
+    const series = buildSeries(
+      [
+        result(first, {candidate: {index: 1, total: 2}, compressMBps: 90}),
+        result({id: 'untrained-2', rowId: 2, compressor: 'OpenZL'}, {compressMBps: 200}),
+        result(second, {candidate: {index: 1, total: 2}, compressMBps: 150}),
+        result(first, {candidate: {index: 2, total: 2}, compressMBps: 500}),
+        result(second, {candidate: {index: 2, total: 2}, compressMBps: 400}),
       ],
       'compressMBps',
     );
 
-    expect(series.map((one) => one.compressor)).toEqual(['OpenZL', 'zstd']);
-    expect(series[0].points).toHaveLength(2);
+    expect([...series.keys()]).toEqual(['trained-1', 'untrained-2', 'trained-4']);
+    const frontiers = [...series.values()];
+    expect(frontiers.map((one) => one.points.map((point) => point.x))).toEqual([[90, 500], [200], [150, 400]]);
+  });
+
+  it.each(['zstd', 'gzip'] as const)('joins %s levels across compressor rows', (compressor) => {
+    const [series] = buildSeries(
+      [result({compressor, rowId: 1, level: 1}), result({compressor, rowId: 4, level: 9})],
+      'compressMBps',
+    ).values();
+    expect(series.points).toHaveLength(2);
   });
 
   it('orders points by speed so the line does not double back', () => {
@@ -46,12 +87,29 @@ describe('buildSeries', () => {
         result({compressor: 'zstd', level: 9}, {compressMBps: 90, ratio: 7}),
       ],
       'compressMBps',
-    );
+    ).values();
     expect(series.points.map((point) => point.x)).toEqual([90, 500]);
   });
 
+  it.each(['compressMBps', 'decompressMBps'] as const)('orders OpenZL candidates by speed on %s', (axis) => {
+    const job = {compressor: 'OpenZL', training: {paretoFrontier: true, candidates: 3}} as const;
+    const [series] = buildSeries(
+      [
+        result(job, {candidate: {index: 1, total: 3}, ratio: 7, compressMBps: 200, decompressMBps: 300}),
+        result(job, {candidate: {index: 2, total: 3}, ratio: 5, compressMBps: 300, decompressMBps: 100}),
+        result(job, {candidate: {index: 3, total: 3}, ratio: 3, compressMBps: 100, decompressMBps: 200}),
+      ],
+      axis,
+    ).values();
+    const speeds = series.points.map((point) => point.x);
+    expect(speeds).toEqual([...speeds].sort((a, b) => a - b));
+  });
+
   it('plots the axis it was asked for', () => {
-    const [byDecompress] = buildSeries([result({compressor: 'gzip'}, {decompressMBps: 400})], 'decompressMBps');
+    const [byDecompress] = buildSeries(
+      [result({compressor: 'gzip'}, {decompressMBps: 400})],
+      'decompressMBps',
+    ).values();
     expect(byDecompress.points[0].x).toBe(400);
   });
 
@@ -59,33 +117,38 @@ describe('buildSeries', () => {
     // An empty input measures as 0 MB/s at a ratio of 0. `logDomain` already
     // leaves it out of the range, so a point at log(0) would have nowhere
     // on the frame to go.
-    const series = buildSeries(
+    const [series] = buildSeries(
       [
         result({compressor: 'zstd', level: 1}, {compressMBps: 0, ratio: 0}),
         result({compressor: 'zstd', level: 9}, {compressMBps: 90, ratio: 7}),
       ],
       'compressMBps',
-    );
-    expect(series[0].points.map((point) => point.x)).toEqual([90]);
+    ).values();
+    expect(series.points.map((point) => point.x)).toEqual([90]);
   });
 
-  it('names a point with its codec, since a tooltip shows it alone', () => {
-    const [trained] = buildSeries([result({compressor: 'OpenZL'}, {candidate: {index: 2, total: 5}})], 'compressMBps');
-    const [levelled] = buildSeries([result({compressor: 'zstd', level: 9})], 'compressMBps');
-    expect(trained.points[0].label).toBe('OpenZL #2');
+  it('names a point with its codec and OpenZL profile or zstd/gzip level, since a tooltip shows it alone', () => {
+    const [trained] = buildSeries(
+      [result({compressor: 'OpenZL', profile: 'csv'}, {candidate: {index: 2, total: 5}})],
+      'compressMBps',
+    ).values();
+    const [untrained] = buildSeries([result({compressor: 'OpenZL', level: 3})], 'compressMBps').values();
+    const [levelled] = buildSeries([result({compressor: 'zstd', level: 9})], 'compressMBps').values();
+    expect(trained.points[0].label).toBe('OpenZL csv #2');
+    expect(untrained.points[0].label).toBe('OpenZL serial');
     expect(levelled.points[0].label).toBe('zstd Level 9');
   });
 
   it('drops a point the log axis has no place for, infinite or not a number', () => {
-    const series = buildSeries(
+    const [series] = buildSeries(
       [
         result({compressor: 'zstd', level: 1}, {compressMBps: Number.POSITIVE_INFINITY}),
         result({compressor: 'zstd', level: 3}, {ratio: Number.NaN}),
         result({compressor: 'zstd', level: 9}, {compressMBps: 90, ratio: 7}),
       ],
       'compressMBps',
-    );
-    expect(series[0].points.map((point) => point.x)).toEqual([90]);
+    ).values();
+    expect(series.points.map((point) => point.x)).toEqual([90]);
   });
 });
 

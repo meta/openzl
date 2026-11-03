@@ -4,7 +4,7 @@ import type {CompressorName} from './compressors.ts';
 import type {JobResult} from './benchmarkTypes.ts';
 import {measurementKey} from './measurements.ts';
 
-/** One codec's points on a ratio-against-speed chart, in the run's order. */
+/** A codec's levels or one OpenZL job's measurements on a ratio-against-speed chart. */
 export interface Series {
   readonly compressor: CompressorName;
   readonly points: readonly ChartPoint[];
@@ -22,39 +22,47 @@ export interface ChartPoint {
 export type SpeedAxis = 'compressMBps' | 'decompressMBps';
 
 /**
- * One series per codec rather than per compressor row: two OpenZL rows are the
- * same colour on the charts, so keeping them apart would draw two lines the
- * reader cannot tell apart anyway.
+ * Each OpenZL training job has its own curve. zstd and gzip each have one curve
+ * connecting their selected levels.
  */
-export function buildSeries(results: readonly JobResult[], axis: SpeedAxis): readonly Series[] {
-  const byCodec = new Map<CompressorName, ChartPoint[]>();
+export function buildSeries(results: readonly JobResult[], axis: SpeedAxis): ReadonlyMap<string, Series> {
+  const bySeries = new Map<string, {compressor: CompressorName; points: ChartPoint[]}>();
   for (const result of results) {
     if (!plottable(result[axis]) || !plottable(result.ratio)) {
       continue;
     }
     const point = {x: result[axis], y: result.ratio, label: pointLabel(result), key: measurementKey(result)};
-    const points = byCodec.get(result.job.compressor);
-    if (points === undefined) {
-      byCodec.set(result.job.compressor, [point]);
+    const compressor = result.job.compressor;
+    const key = compressor === 'OpenZL' ? result.job.id : compressor;
+    const series = bySeries.get(key);
+    if (series === undefined) {
+      bySeries.set(key, {
+        compressor,
+        points: [point],
+      });
     } else {
-      points.push(point);
+      series.points.push(point);
     }
   }
   // Ascending speed, so the line joining the points reads left to right
   // instead of doubling back on itself.
-  return [...byCodec.entries()].map(([compressor, points]) => ({
-    compressor,
-    points: [...points].sort((a, b) => a.x - b.x),
-  }));
+  for (const series of bySeries.values()) {
+    series.points.sort((a, b) => a.x - b.x);
+  }
+  return bySeries;
 }
 
-/** Named with its codec: a tooltip shows one point, with no legend beside it. */
+/** Named with its codec and its OpenZL profile or zstd/gzip level: a tooltip shows one point. */
 function pointLabel(result: JobResult): string {
-  const codec = result.job.compressor;
-  if (result.candidate !== null) {
-    return `${codec} #${String(result.candidate.index)}`;
+  const job = result.job;
+  if (job.compressor !== 'OpenZL') {
+    return `${job.compressor} Level ${String(job.level)}`;
   }
-  return `${codec} Level ${String(result.job.level)}`;
+  const name = `${job.compressor} ${job.profile}`;
+  if (result.candidate !== null) {
+    return `${name} #${String(result.candidate.index)}`;
+  }
+  return name;
 }
 
 /**
