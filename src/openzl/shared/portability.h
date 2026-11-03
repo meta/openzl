@@ -39,18 +39,21 @@ ZL_BEGIN_C_DECLS
 #    define ZL_FLATTEN_ATTR // MSVC doesn't have equivalent to flatten
 #    define ZL_ALIGNED(n) __declspec(align(n))
 #    define ZL_UNUSED // MSVC doesn't need unused attribute
+#    define ZL_NORETURN __declspec(noreturn)
 #elif defined(__GNUC__) || defined(__clang__)
 #    define ZL_FORCE_INLINE_ATTR __attribute__((always_inline))
 #    define ZL_FORCE_NOINLINE_ATTR __attribute__((noinline))
 #    define ZL_FLATTEN_ATTR __attribute__((flatten))
 #    define ZL_ALIGNED(n) __attribute__((aligned(n)))
 #    define ZL_UNUSED __attribute__((unused))
+#    define ZL_NORETURN __attribute__((noreturn))
 #else
 #    define ZL_FORCE_INLINE_ATTR
 #    define ZL_FORCE_NOINLINE_ATTR
 #    define ZL_FLATTEN_ATTR
 #    define ZL_ALIGNED(n)
 #    define ZL_UNUSED
+#    define ZL_NORETURN
 #endif
 
 /// Keywords

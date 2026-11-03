@@ -149,10 +149,21 @@
 
 /**
  * Unlike ZL_ASSERT(), which becomes a no-op in optimized builds, ZL_ABORT()
- * will always kill your process.
+ * never returns. By default, it kills your process.
+ *
+ * An application which must not be killed, such as an R package, can build
+ * OpenZL with -DZL_ABORT_FUNC=name to call its own `void name(void)` instead.
+ * That function must not return either.
  */
 #include <stdlib.h>
-#define ZL_ABORT() abort()
+#ifdef ZL_ABORT_FUNC
+ZL_BEGIN_C_DECLS
+ZL_NORETURN void ZL_ABORT_FUNC(void);
+ZL_END_C_DECLS
+#    define ZL_ABORT() ZL_ABORT_FUNC()
+#else
+#    define ZL_ABORT() abort()
+#endif
 
 /************************************************************
  * These macros control whether these features are enabled. *
