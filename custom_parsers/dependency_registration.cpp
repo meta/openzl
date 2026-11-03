@@ -106,6 +106,16 @@ void processDependencies(Compressor& compressor, poly::string_view serialized)
                                     compressor.get(), ZL_RES_error(result)));
                 }
                 madeProgress = true;
+            } else if (graphName == "Tensor Rows32") {
+                const auto result =
+                        ZL_TensorGraphs_registerRows32Graph(compressor.get());
+                if (ZL_RES_isError(result)) {
+                    throw std::runtime_error(
+                            std::string("Failed to create the rows graph: ")
+                            + ZL_Compressor_getErrorContextString_fromError(
+                                    compressor.get(), ZL_RES_error(result)));
+                }
+                madeProgress = true;
             } else {
                 ZL_LOG(WARN,
                        "processDependencies: unresolved graph dependency '%s'",

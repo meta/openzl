@@ -834,6 +834,58 @@ TEST_F(SafetensorsCompressorTest, CodesFloat32FromBfloat16AsBfloat16)
     EXPECT_GT(almostSize, f32Size);
 }
 
+/// @p f32 with the 13 low bits of the fraction cleared in rows [first, last) of
+/// @p cols values, as rows of float16 weights never updated in float32 keep.
+std::string
+withFloat16Rows(std::string f32, size_t cols, size_t first, size_t last)
+{
+    for (size_t i = first * cols; i < last * cols; ++i) {
+        uint32_t bits;
+        memcpy(&bits, &f32[4 * i], 4);
+        bits &= ~0x1fffu;
+        memcpy(&f32[4 * i], &bits, 4);
+    }
+    return f32;
+}
+
+TEST_F(SafetensorsCompressorTest, CodesFloat16RowsOfFloat32TensorsApart)
+{
+    const size_t rows = 256, cols = 512;
+    const std::string native = gaussianF32(rows * cols, 0);
+    const std::string mixed  = withFloat16Rows(native, cols, 64, 128);
+    useChunkSize(ZL_SAFETENSORS_DEFAULT_CHUNK_SIZE);
+    NodeCounter onNative(ZL_NODE_DISPATCH);
+    NodeCounter onMixed(ZL_NODE_DISPATCH);
+    NodeCounter onOneRow(ZL_NODE_DISPATCH);
+    NodeCounter onFlat(ZL_NODE_DISPATCH);
+
+    attachHooks(onNative);
+    const size_t nativeSize = expectRoundTrip(
+            buildSafetensors({ { "w", "F32", { rows, cols }, native } }));
+    attachHooks(onMixed);
+    const size_t mixedSize = expectRoundTrip(
+            buildSafetensors({ { "w", "F32", { rows, cols }, mixed } }));
+    // Too few float16 values to pay for the split.
+    attachHooks(onOneRow);
+    expectRoundTrip(buildSafetensors(
+            { { "w",
+                "F32",
+                { rows, cols },
+                withFloat16Rows(native, cols, 0, 1) } }));
+    // Without rows from the parser, the tensor is not split.
+    attachHooks(onFlat);
+    expectRoundTrip(
+            buildSafetensors({ { "w", "F32", { rows * cols }, mixed } }));
+
+    EXPECT_EQ(onNative.count, 0u);
+    EXPECT_GT(onMixed.count, 0u);
+    EXPECT_EQ(onOneRow.count, 0u);
+    EXPECT_EQ(onFlat.count, 0u);
+    // Most of the 13 zero bits of each float16 value are saved.
+    const size_t zeroBytes = 64 * cols * 13 / 8;
+    EXPECT_LT(mixedSize, nativeSize - zeroBytes * 9 / 10);
+}
+
 TEST_F(SafetensorsCompressorTest, TransposesTheBytesOfFloat16Tensors)
 {
     const auto f16 = buildSafetensors(

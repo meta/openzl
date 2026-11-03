@@ -36,6 +36,11 @@ typedef enum {
 /// Number of elements of the scratch buffer of ZL_TensorGraphs_refineClass().
 #define ZL_TENSOR_SAMPLE_SIZE 4096
 
+/// Int metadata carrying the size in bytes of the rows of a segment, from the
+/// ZL_TensorInfo::splitAlign of its tensor. The tensor chunker sets it on the
+/// stream of each segment.
+#define ZL_TENSOR_ROW_SIZE_METADATA_ID 2372
+
 /// @returns ZL_TensorClass_atypical16 or ZL_TensorClass_atypical32 for an f16,
 /// bf16 or f32 tensor with few distinct values (masks, constants...),
 /// ZL_TensorClass_upcast32 for an f32 tensor whose values mostly keep the 13
@@ -60,6 +65,15 @@ ZL_TensorGraphs_registerScale16Graph(ZL_Compressor* compressor);
 /// same graph.
 ZL_RESULT_OF(ZL_GraphID)
 ZL_TensorGraphs_registerUpcast32Graph(ZL_Compressor* compressor);
+
+/// Registers the graph of ZL_TensorClass_f32, which sends the rows whose values
+/// all keep the 13 lowest bits of their fraction at zero, as rows of a tensor
+/// converted from f16 and never updated since do, to the graph of
+/// ZL_TensorGraphs_registerUpcast32Graph(), and the other rows to the float32
+/// graph. Rows have the size of ZL_TENSOR_ROW_SIZE_METADATA_ID. Later calls on
+/// the same compressor return the same graph.
+ZL_RESULT_OF(ZL_GraphID)
+ZL_TensorGraphs_registerRows32Graph(ZL_Compressor* compressor);
 
 /// Fills @p successors with the default graph of each class. They are ACE
 /// graphs, so that training can replace them. @p scale16 is the graph of

@@ -2,6 +2,7 @@
 
 #include "custom_parsers/shared_components/tensor_chunker.h"
 
+#include <limits.h>
 #include <stdbool.h>
 
 #include "custom_parsers/shared_components/tensor_graphs.h"
@@ -19,6 +20,7 @@
 #define TC_CHUNK_SIZE_MAX_PID 1
 #define TC_SEGMENT_SIZES_PID 2
 #define TC_SEGMENT_TAGS_PID 3
+#define TC_SEGMENT_ROW_SIZES_PID 4
 
 // A chunk cannot hold more than ZL_runtimeNodeLimit() nodes (20000). Measured
 // costs: up to ~39 nodes per segment through the generic graph (int64, f64),
@@ -41,6 +43,7 @@ typedef struct {
     size_t chunkSizeMax;
     size_t* sizes;
     uint32_t* tags;
+    size_t* rowSizes;
     size_t capacity;
     size_t nbSegments;
     size_t nbBytes;
@@ -60,13 +63,22 @@ TC_innerGraphFn(ZL_Graph* graph, ZL_Edge* inputs[], size_t nbInputs)
             ZL_Graph_getLocalRefParam(graph, TC_SEGMENT_SIZES_PID);
     const ZL_RefParam tagsParam =
             ZL_Graph_getLocalRefParam(graph, TC_SEGMENT_TAGS_PID);
+    const ZL_RefParam rowSizesParam =
+            ZL_Graph_getLocalRefParam(graph, TC_SEGMENT_ROW_SIZES_PID);
     ZL_ERR_IF_NE(sizesParam.paramId, TC_SEGMENT_SIZES_PID, graph_invalid);
     ZL_ERR_IF_NE(tagsParam.paramId, TC_SEGMENT_TAGS_PID, graph_invalid);
-    const size_t* const sizes  = (const size_t*)sizesParam.paramRef;
-    const uint32_t* const tags = (const uint32_t*)tagsParam.paramRef;
-    const size_t nbSegments    = sizesParam.paramSize / sizeof(size_t);
+    ZL_ERR_IF_NE(
+            rowSizesParam.paramId, TC_SEGMENT_ROW_SIZES_PID, graph_invalid);
+    const size_t* const sizes    = (const size_t*)sizesParam.paramRef;
+    const uint32_t* const tags   = (const uint32_t*)tagsParam.paramRef;
+    const size_t* const rowSizes = (const size_t*)rowSizesParam.paramRef;
+    const size_t nbSegments      = sizesParam.paramSize / sizeof(size_t);
     ZL_ERR_IF_NE(
             tagsParam.paramSize / sizeof(uint32_t), nbSegments, graph_invalid);
+    ZL_ERR_IF_NE(
+            rowSizesParam.paramSize / sizeof(size_t),
+            nbSegments,
+            graph_invalid);
 
     const ZL_GraphIDList successors = ZL_Graph_getCustomGraphs(graph);
     ZL_ERR_IF_LE(successors.nbGraphIDs, ZL_TensorClass_raw, graph_invalid);
@@ -93,6 +105,12 @@ TC_innerGraphFn(ZL_Graph* graph, ZL_Edge* inputs[], size_t nbInputs)
     for (size_t i = 0; i < nbSegments; ++i) {
         const uint32_t tag =
                 tags[i] < successors.nbGraphIDs ? tags[i] : ZL_TensorClass_raw;
+        // Rows are at most half of a chunk of at most 64 MiB.
+        ZL_ASSERT_LE(rowSizes[i], (size_t)INT_MAX);
+        ZL_ERR_IF_ERR(ZL_Edge_setIntMetadata(
+                streams.edges[i],
+                ZL_TENSOR_ROW_SIZE_METADATA_ID,
+                (int)rowSizes[i]));
         ZL_ERR_IF_ERR(ZL_Edge_setDestination(
                 streams.edges[i], successors.graphids[tag]));
     }
@@ -138,11 +156,14 @@ static ZL_Report TC_flush(TC_Chunker* ch)
     if (ch->nbBytes == 0) {
         return ZL_returnSuccess();
     }
-    const ZL_RefParam refParams[2] = {
+    const ZL_RefParam refParams[3] = {
         { TC_SEGMENT_SIZES_PID, ch->sizes, ch->nbSegments * sizeof(size_t) },
         { TC_SEGMENT_TAGS_PID, ch->tags, ch->nbSegments * sizeof(uint32_t) },
+        { TC_SEGMENT_ROW_SIZES_PID,
+          ch->rowSizes,
+          ch->nbSegments * sizeof(size_t) },
     };
-    const ZL_LocalParams localParams        = { .refParams = { refParams, 2 } };
+    const ZL_LocalParams localParams        = { .refParams = { refParams, 3 } };
     const ZL_RuntimeGraphParameters gparams = { .localParams = &localParams };
     ZL_ERR_IF_ERR(ZL_Segmenter_processChunk(
             ch->sctx, &ch->nbBytes, 1, ch->innerGraph, &gparams));
@@ -153,11 +174,12 @@ static ZL_Report TC_flush(TC_Chunker* ch)
 
 /// A chunk holds at most one piece of each segment: pieces of a split segment
 /// are flushed one by one, except the last.
-static void TC_append(TC_Chunker* ch, size_t size, uint32_t tag)
+static void TC_append(TC_Chunker* ch, size_t size, const TC_Segment* seg)
 {
     ZL_ASSERT_LT(ch->nbSegments, ch->capacity);
-    ch->sizes[ch->nbSegments] = size;
-    ch->tags[ch->nbSegments]  = tag;
+    ch->sizes[ch->nbSegments]    = size;
+    ch->tags[ch->nbSegments]     = seg->tag;
+    ch->rowSizes[ch->nbSegments] = seg->splitAlign;
     ++ch->nbSegments;
     ch->nbBytes += size;
 }
@@ -196,23 +218,25 @@ static ZL_Report TC_addSegment(TC_Chunker* ch, const TC_Segment* seg)
         if (piece >= remaining) {
             break;
         }
-        TC_append(ch, piece, seg->tag);
+        TC_append(ch, piece, seg);
         ZL_ERR_IF_ERR(TC_flush(ch));
         remaining -= piece;
     }
-    TC_append(ch, remaining, seg->tag);
+    TC_append(ch, remaining, seg);
     return ZL_returnSuccess();
 }
 
 /// Sends @p segments, which cover the whole input, to the inner graph chunk by
-/// chunk. @p sizes and @p tags are scratch buffers of @p nbSegments entries.
+/// chunk. @p sizes, @p tags and @p rowSizes are scratch buffers of
+/// @p nbSegments entries.
 static ZL_Report TC_process(
         ZL_Segmenter* sctx,
         size_t chunkSizeMax,
         const TC_Segment* segments,
         size_t nbSegments,
         size_t* sizes,
-        uint32_t* tags)
+        uint32_t* tags,
+        size_t* rowSizes)
 {
     ZL_RESULT_DECLARE_SCOPE_REPORT(sctx);
     const ZL_GraphIDList customGraphs = ZL_Segmenter_getCustomGraphs(sctx);
@@ -223,6 +247,7 @@ static ZL_Report TC_process(
         .chunkSizeMax = chunkSizeMax,
         .sizes        = sizes,
         .tags         = tags,
+        .rowSizes     = rowSizes,
         .capacity     = nbSegments,
     };
     for (size_t i = 0; i < nbSegments; ++i) {
@@ -317,6 +342,7 @@ typedef struct {
     uint32_t* sample;
     size_t* sizes;
     uint32_t* tags;
+    size_t* rowSizes;
 } TC_Buffers;
 
 /// @returns false if an allocation failed or its size overflowed.
@@ -326,7 +352,7 @@ static bool TC_allocBuffers(
         size_t tokenSize,
         TC_Buffers* buffers)
 {
-    // A segment is larger than an entry of sizes or tags.
+    // A segment is larger than an entry of sizes, tags or rowSizes.
     size_t tokensSize, segmentsSize;
     if (ZL_overflowMulST(maxTokens, tokenSize, &tokensSize)
         || ZL_overflowMulST(
@@ -341,8 +367,10 @@ static bool TC_allocBuffers(
             sctx, maxTokens * sizeof(*buffers->sizes));
     buffers->tags = ZL_Segmenter_getScratchSpace(
             sctx, maxTokens * sizeof(*buffers->tags));
+    buffers->rowSizes = ZL_Segmenter_getScratchSpace(
+            sctx, maxTokens * sizeof(*buffers->rowSizes));
     return buffers->tokens && buffers->segments && buffers->sample
-            && buffers->sizes && buffers->tags;
+            && buffers->sizes && buffers->tags && buffers->rowSizes;
 }
 
 /// Lexes the input into @p buffers, allocated for the largest number of tokens
@@ -413,7 +441,8 @@ ZL_Report ZL_TensorChunker_segment(
             buffers.segments,
             nbSegments,
             buffers.sizes,
-            buffers.tags);
+            buffers.tags,
+            buffers.rowSizes);
 }
 
 /* ------------------------------------------------------------------------
