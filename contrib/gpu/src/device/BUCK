@@ -49,6 +49,26 @@ cpp_unittest(
     ],
 )
 
+# The process's nvcomp 5, loaded once for every kernel that uses it.
+cpp_library(
+    # @autodeps-skip
+    name = "nvcomp",
+    srcs = ["nvcomp.cpp"],
+    headers = relative_headers(["nvcomp.hpp"]),
+    header_namespace = "",
+)
+
+cpp_unittest(
+    # @autodeps-skip
+    name = "nvcomp_test",
+    srcs = ["tests/NvcompTest.cpp"],
+    network_access = network_access_utils.none(),
+    deps = [
+        "fbsource//third-party/googletest:gtest",
+        ":nvcomp",
+    ],
+)
+
 cpp_library(
     # @autodeps-skip
     name = "cuda_device",
@@ -64,6 +84,7 @@ cpp_library(
     deps = [
         "../../../..:zstronglib",
         "../codecs/float_deconstruct:decode_float_deconstruct_cuda",
+        "../codecs/zstd:decode_zstd_cuda",
     ],
     exported_deps = [":device"],
     external_deps = [("cuda", None, "cuda-lazy")],

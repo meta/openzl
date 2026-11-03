@@ -162,6 +162,13 @@ class Stream {
 };
 
 /**
+ * Settings that every device takes, whatever its runtime. A runtime's own
+ * options extend this struct, as `CudaDeviceOptions` does. It holds no setting
+ * yet.
+ */
+struct DeviceOptions {};
+
+/**
  * The device-runtime operations that the host decode code needs.
  *
  * The host code calls no device runtime directly. Each runtime implements the

@@ -235,7 +235,10 @@ ZL_Report joinOnCurrentDevice(
 
 class CudaDevice final : public Device {
    public:
-    CudaDevice() : Device(cudaKernelTable()) {}
+    explicit CudaDevice(const CudaDeviceOptions& options)
+            : Device(cudaKernelTable(options))
+    {
+    }
 
    protected:
     ZL_Report doCheckStream(void* native) override
@@ -341,11 +344,11 @@ class CudaDevice final : public Device {
 
 } // namespace
 
-std::unique_ptr<Device> makeCurrentCudaDevice()
+std::unique_ptr<Device> makeCurrentCudaDevice(const CudaDeviceOptions& options)
 {
     // The constructor builds the kernel table, which can throw.
     try {
-        return std::make_unique<CudaDevice>();
+        return std::make_unique<CudaDevice>(options);
     } catch (const std::bad_alloc&) {
         return nullptr;
     }
