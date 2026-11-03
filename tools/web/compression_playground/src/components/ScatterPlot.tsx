@@ -63,10 +63,10 @@ function PointTooltip({active, payload}: {active?: boolean; payload?: {payload: 
 
 /** The point for `key` and the codec whose colour it takes, if it is plotted. */
 function findPoint(
-  series: readonly Series[],
+  series: ReadonlyMap<string, Series>,
   key: string | null,
 ): {point: ChartPoint; compressor: CompressorName} | null {
-  for (const one of series) {
+  for (const one of series.values()) {
     const point = one.points.find((candidate) => candidate.key === key);
     if (point !== undefined) {
       return {point, compressor: one.compressor};
@@ -121,13 +121,13 @@ export default function ScatterPlot({
           width={44}
         />
         <Tooltip content={<PointTooltip />} cursor={{strokeDasharray: '3 3'}} />
-        {series.map((one) => (
+        {[...series.entries()].map(([key, one]) => (
           <Scatter
-            key={one.compressor}
+            key={key}
             name={one.compressor}
             data={[...one.points]}
             fill={codec[one.compressor]}
-            line={{stroke: codec[one.compressor], strokeWidth: 1.5}}
+            line={one.points.length > 1 ? {stroke: codec[one.compressor], strokeWidth: 1.5} : false}
           />
         ))}
         {spot !== null && <ReferenceLine x={spot.point.x} strokeDasharray="3 3" />}

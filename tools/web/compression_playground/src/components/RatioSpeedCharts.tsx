@@ -101,7 +101,10 @@ export default function RatioSpeedCharts({
     return null;
   }
   // Both charts hold the same points, so either one's series gives the counts.
-  const series = buildSeries(results, 'compressMBps');
+  const counts = new Map<CompressorName, number>();
+  for (const series of buildSeries(results, 'compressMBps').values()) {
+    counts.set(series.compressor, (counts.get(series.compressor) ?? 0) + series.points.length);
+  }
 
   return (
     <VStack gap="16px" align="stretch">
@@ -149,8 +152,8 @@ export default function RatioSpeedCharts({
       </Box>
 
       <Box display="flex" flexWrap="wrap" gap="8px">
-        {series.map((one) => (
-          <LegendChip key={one.compressor} compressor={one.compressor} count={one.points.length} />
+        {[...counts.entries()].map(([compressor, count]) => (
+          <LegendChip key={compressor} compressor={compressor} count={count} />
         ))}
       </Box>
     </VStack>

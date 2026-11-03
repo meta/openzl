@@ -40,13 +40,28 @@ function result(
     decompressMBps: 200,
     candidate: null,
     ...metrics,
-    job: {id: 'j', rowId: 1, level: 1, iterations: 1, profile: 'serial', training: null, ...job} as BenchmarkJob,
+    job: {
+      id: `${job.rowId ?? 1}-${job.compressor}-${job.level ?? 1}`,
+      rowId: 1,
+      level: 1,
+      iterations: 1,
+      profile: 'serial',
+      training: null,
+      ...job,
+    } as BenchmarkJob,
   };
 }
 
+const TRAINED_JOB = {
+  id: 'trained-1',
+  compressor: 'OpenZL',
+  rowId: 1,
+  training: {paretoFrontier: true, candidates: 6},
+} as const;
+
 const RESULTS = [
-  result({compressor: 'OpenZL', rowId: 1}, {candidate: {index: 1, total: 2}, ratio: 15235, compressMBps: 38}),
-  result({compressor: 'OpenZL', rowId: 1}, {candidate: {index: 2, total: 2}, ratio: 2763, compressMBps: 310}),
+  result(TRAINED_JOB, {candidate: {index: 1, total: 2}, ratio: 15235, compressMBps: 38}),
+  result(TRAINED_JOB, {candidate: {index: 2, total: 2}, ratio: 2763, compressMBps: 310}),
   result({compressor: 'zstd', rowId: 2, level: 1}, {ratio: 1450, compressMBps: 520}),
   result({compressor: 'gzip', rowId: 3, level: 6}, {ratio: 342, compressMBps: 162}),
 ];
@@ -93,6 +108,48 @@ describe('RatioSpeedCharts', () => {
     expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(8);
   });
 
+  it('draws untrained OpenZL points without connecting lines', async () => {
+    const {container} = await renderPlotted([
+      result({id: 'untrained-1', compressor: 'OpenZL', rowId: 1}, {compressMBps: 90}),
+      result({id: 'untrained-4', compressor: 'OpenZL', rowId: 4}, {compressMBps: 500}),
+    ]);
+    expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(4);
+    expect(container.querySelectorAll('.recharts-scatter-line')).toHaveLength(0);
+  });
+
+  it('connects each trained OpenZL frontier without including untrained points', async () => {
+    const secondJob = {...TRAINED_JOB, id: 'trained-4', rowId: 4};
+    const {container} = await renderPlotted([
+      ...RESULTS.slice(0, 2),
+      result({id: 'untrained-2', compressor: 'OpenZL', rowId: 2}),
+      result(secondJob, {candidate: {index: 1, total: 2}, compressMBps: 150}),
+      result(secondJob, {candidate: {index: 2, total: 2}, compressMBps: 400}),
+    ]);
+
+    const scatters = [...container.querySelectorAll('.recharts-scatter')];
+    expect(scatters.map((scatter) => scatter.querySelectorAll('.recharts-scatter-symbol').length)).toEqual([
+      2, 1, 2, 2, 1, 2,
+    ]);
+    for (const scatter of scatters) {
+      const points = scatter.querySelectorAll('.recharts-scatter-symbol').length;
+      expect(scatter.querySelectorAll('.recharts-scatter-line path')).toHaveLength(points === 2 ? 1 : 0);
+    }
+    expect(screen.getAllByText('OpenZL')).toHaveLength(1);
+    const legend = screen.getByText('OpenZL').closest('div') as HTMLElement;
+    expect(within(legend).getByText('5')).toBeInTheDocument();
+  });
+
+  it('keeps zstd and gzip levels connected on both charts', async () => {
+    const {container} = await renderPlotted(
+      (['zstd', 'gzip'] as const).flatMap((compressor) => [
+        result({compressor, level: 1}, {compressMBps: 90}),
+        result({compressor, level: 9}, {compressMBps: 500}),
+      ]),
+    );
+    expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(8);
+    expect(container.querySelectorAll('.recharts-scatter-line path')).toHaveLength(4);
+  });
+
   it('labels both axes as logarithmic and both throughputs', () => {
     renderCharts();
     expect(screen.getByText('Compress MB/s (log)')).toBeInTheDocument();
@@ -122,8 +179,8 @@ describe('RatioSpeedCharts', () => {
   });
 
   it('picks out the highlighted measurement on both charts, in its codec colour', async () => {
-    // Every job here has id `j`, so the second OpenZL candidate is `j-2`.
-    const {container} = await renderPlotted(RESULTS, 'j-2');
+    // The OpenZL rows share `TRAINED_JOB`, so the second candidate is `trained-1-2`.
+    const {container} = await renderPlotted(RESULTS, 'trained-1-2');
 
     const rings = [...container.querySelectorAll('.highlighted-point')];
     expect(rings).toHaveLength(2);
