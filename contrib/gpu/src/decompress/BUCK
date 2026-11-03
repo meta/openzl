@@ -22,7 +22,10 @@ cpp_library(
     ])
     | {"gpu_decompress.h": "gpu_decompress.h", "gpu_decompress.hpp": "gpu_decompress.hpp"},
     header_namespace = "",
-    deps = ["../device:cuda_device"],
+    deps = [
+        "../device:cuda_device",
+        "../execution:decode_executor",
+    ],
     exported_deps = [
         "../../../..:zstronglib",
         "../../../../cpp:openzl_cpp",
@@ -101,6 +104,38 @@ cpp_unittest(
         "../../testkit:testkit_relative_headers",
         "../common:cuda_raii_relative_headers",
         "../device:cuda_device",
+        "fbsource//third-party/googletest:gtest",
+        ":decompress",
+    ],
+    external_deps = [("cuda", None, "cuda-lazy")],
+)
+
+# Full decodes through ZL_GPU_decompress on a GPU.
+cpp_unittest(
+    # @autodeps-skip
+    name = "gpu_decompress_end_to_end_test",
+    srcs = ["tests/GpuDecompressEndToEndTest.cu"],
+    keep_gpu_sections = True,
+    labels = [tpx_labels.serialize]
+    + ci.labels(
+        ci.replace({ci.linux(ci.dev()): ci.linux(ci.mode("fbcode//mode/dev-nosan"))}),
+        ci.remove(ci.linux(ci.coverage(ci.mode("fbcode//mode/dev-cov")))),
+    ),
+    network_access = network_access_utils.none(),
+    nvcc_flags = get_nvcc_arch_args() + ["-lineinfo"],
+    remote_execution = re_test_utils.remote_execution(
+        platform = "gpu-remote-execution",
+        use_case = "tpx-default",
+    ),
+    target_compatible_with = sanitizers.sanitizer_enabled(
+        no = [],
+        yes = ["ovr_config//:none"],
+    ),
+    deps = [
+        "../../testkit:testkit",
+        "../codecs/float_deconstruct:bf16_test_frames",
+        "../common:cuda_error",
+        "../common:cuda_raii",
         "fbsource//third-party/googletest:gtest",
         ":decompress",
     ],

@@ -127,7 +127,8 @@ ZL_Report collectGPUChunks(
  * @returns The decompressed size on success, or an error. An empty batch
  * returns @c parameter_invalid. The planner cannot yet combine frames, so a
  * batch with chunks of more than one frame returns
- * @c temporaryLibraryLimitation.
+ * @c temporaryLibraryLimitation. A frame with more than one output, or with
+ * an output that is not serial, returns @c temporaryLibraryLimitation.
  * @throws std::bad_alloc or openzl::Exception if an allocation fails.
  */
 ZL_Report decompressChunks(
