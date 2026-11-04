@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
 
+import sys
 from typing import List, Tuple
 from unittest import TestCase
 
@@ -478,3 +479,38 @@ class TestOpenzlSys(TestCase):
         del decompressed
 
         self.assertTrue(np.array_equal(data, round_tripped))
+
+    def test_decompress_buffer(self) -> None:
+        data = np.array([42] * 1000, dtype=np.uint32)
+        compressor = ext.Compressor()
+        compressor.set_parameter(ext.CParam.FormatVersion, ext.MAX_FORMAT_VERSION)
+        graph = ext.graphs.Constant()(compressor)
+        compressor.select_starting_graph(graph)
+        compressed = self._round_trip(compressor, [ext.Input(ext.Type.Numeric, data)])
+
+        class MyBuffer:
+            def __init__(self, data):
+                self.data = data
+
+            def __buffer__(self, flag):
+                return self.data.__buffer__(flag)
+
+        buffers = [
+            bytearray(compressed),
+            np.frombuffer(compressed, dtype=np.uint8),
+            MyBuffer(compressed),
+        ]
+        if sys.version_info < (3, 12):
+            buffers.pop()
+        for buffer in buffers:
+            dctx = ext.DCtx()
+            decompressed = dctx.decompress(buffer)
+            round_tripped = decompressed[0].content.as_nparray()
+            self.assertTrue(np.array_equal(data, round_tripped))
+
+    def test_decompress_does_not_convert_arrays(self) -> None:
+        buffer = np.frombuffer(b"Pan-Galactic Gargle Blaster\0", dtype=np.uint16)
+        dctx = ext.DCtx()
+        self.assertRaises(
+            TypeError, "incompatible function arguments", dctx.decompress, buffer
+        )
