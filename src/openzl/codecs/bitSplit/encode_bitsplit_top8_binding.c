@@ -9,59 +9,58 @@
 #include <stdint.h> /* uint8_t, uint16_t, uint32_t, uint64_t */
 
 /**
- * Find the maximum value across all elements in a numeric input stream.
+ * OR all elements of a numeric input stream together. The result has the same
+ * highest set bit as the maximum value, and is 0 only if all elements are 0.
  *
  * @param src Pointer to source data
  * @param eltWidth Element width in bytes (1, 2, 4, or 8)
  * @param nbElts Number of elements
- * @return Maximum value found (0 if nbElts == 0)
+ * @return OR of all elements (0 if nbElts == 0)
  */
-static uint64_t findMaxValue(const void* src, size_t eltWidth, size_t nbElts)
+static uint64_t orAllValues(const void* src, size_t eltWidth, size_t nbElts)
 {
     if (nbElts == 0)
         return 0;
 
     ZL_ASSERT(src != NULL);
-    uint64_t maxVal = 0;
+    uint64_t allBits = 0;
 
     switch (eltWidth) {
         case 1: {
             const uint8_t* p = (const uint8_t*)src;
-            for (size_t i = 0; i < nbElts; i++) {
-                if (p[i] > maxVal)
-                    maxVal = p[i];
-            }
+            uint8_t acc8     = 0;
+            for (size_t i = 0; i < nbElts; i++)
+                acc8 |= p[i];
+            allBits = acc8;
             break;
         }
         case 2: {
             const uint16_t* p = (const uint16_t*)src;
-            for (size_t i = 0; i < nbElts; i++) {
-                if (p[i] > maxVal)
-                    maxVal = p[i];
-            }
+            uint16_t acc16    = 0;
+            for (size_t i = 0; i < nbElts; i++)
+                acc16 |= p[i];
+            allBits = acc16;
             break;
         }
         case 4: {
             const uint32_t* p = (const uint32_t*)src;
-            for (size_t i = 0; i < nbElts; i++) {
-                if (p[i] > maxVal)
-                    maxVal = p[i];
-            }
+            uint32_t acc32    = 0;
+            for (size_t i = 0; i < nbElts; i++)
+                acc32 |= p[i];
+            allBits = acc32;
             break;
         }
         case 8: {
             const uint64_t* p = (const uint64_t*)src;
-            for (size_t i = 0; i < nbElts; i++) {
-                if (p[i] > maxVal)
-                    maxVal = p[i];
-            }
+            for (size_t i = 0; i < nbElts; i++)
+                allBits |= p[i];
             break;
         }
         default:
             ZL_ASSERT(0); /* unreachable: eltWidth must be 1, 2, 4, or 8 */
     }
 
-    return maxVal;
+    return allBits;
 }
 
 /**
@@ -91,14 +90,14 @@ EI_bitsplit_top8(ZL_Encoder* eictx, const ZL_Input* ins[], size_t nbIns)
     ZL_ASSERT(eltWidth == 1 || eltWidth == 2 || eltWidth == 4 || eltWidth == 8);
     size_t const nbElts = ZL_Input_numElts(in);
 
-    /* Scan for maximum value to determine effective bit width */
-    uint64_t const maxVal = findMaxValue(ZL_Input_ptr(in), eltWidth, nbElts);
+    /* The highest set bit across all elements gives the effective bit width */
+    uint64_t const allBits = orAllValues(ZL_Input_ptr(in), eltWidth, nbElts);
 
     unsigned effectiveWidth;
-    if (maxVal == 0) {
+    if (allBits == 0) {
         effectiveWidth = 0;
     } else {
-        effectiveWidth = floorLog2(maxVal) + 1;
+        effectiveWidth = floorLog2(allBits) + 1;
     }
 
     /* Determine bit widths for the split */
