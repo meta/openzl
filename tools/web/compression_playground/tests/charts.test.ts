@@ -1,8 +1,9 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import {describe, expect, it} from 'vitest';
-import {buildSeries, formatRatioTick, formatSpeedTick, logDomain, logTicks} from '../src/charts.ts';
+import {buildSeries, formatRatioTick, formatSpeedTick, logDomain, logTicks, toggleCodec} from '../src/charts.ts';
 import type {BenchmarkJob, JobResult} from '../src/benchmarkTypes.ts';
+import type {CompressorName} from '../src/compressors.ts';
 
 function result(
   job: Partial<BenchmarkJob> & Pick<BenchmarkJob, 'compressor'>,
@@ -149,6 +150,21 @@ describe('buildSeries', () => {
       'compressMBps',
     ).values();
     expect(series.points.map((point) => point.x)).toEqual([90]);
+  });
+});
+
+describe('toggleCodec', () => {
+  it('adds a codec that was shown and removes one that was hidden', () => {
+    const hidden = toggleCodec(new Set(), 'zstd');
+    expect([...hidden]).toEqual(['zstd']);
+    expect([...toggleCodec(hidden, 'gzip')]).toEqual(['zstd', 'gzip']);
+    expect([...toggleCodec(hidden, 'zstd')]).toEqual([]);
+  });
+
+  it('leaves the set it was given alone', () => {
+    const hidden = new Set<CompressorName>(['zstd']);
+    toggleCodec(hidden, 'gzip');
+    expect([...hidden]).toEqual(['zstd']);
   });
 });
 
