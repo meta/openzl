@@ -4,6 +4,7 @@
 
 #include <string.h>
 
+#include "custom_parsers/pickle_lexer.h"
 #include "custom_parsers/zip_lexer.h"
 #include "openzl/shared/mem.h"
 
@@ -485,7 +486,8 @@ static ZL_Report NP_lexNpz(NP_Out* out, const char* src, size_t srcSize)
     ZL_ERR_IF(
             ZL_isError(ZS2_ZipLexer_init(&lexer, src, srcSize)),
             graph_parser_malformedInput,
-            "neither a .npy file nor a zip archive");
+            "neither a .npy file, a pickle of protocol 2 to 5, "
+            "nor a zip archive");
     ZL_ERR_IF_GT(
             ZS2_ZipLexer_numFiles(&lexer),
             ZL_NUMPY_MAX_MEMBERS,
@@ -500,6 +502,66 @@ static ZL_Report NP_lexNpz(NP_Out* out, const char* src, size_t srcSize)
                 "malformed zip archive");
         for (size_t i = 0; i < ZL_validResult(nbZipTokens); ++i) {
             ZL_ERR_IF_ERR(NP_emitZipToken(out, &zipTokens[i]));
+        }
+    }
+    return ZL_returnSuccess();
+}
+
+/// Describes the pickled array @p pt into @p t, with a kind of 0 when its bytes
+/// are not exactly prod(shape) little-endian elements of its dtype.
+static void NP_describePickled(const ZL_PickleToken* pt, ZL_NumPyToken* t)
+{
+    char descr[32];
+    t->kind         = 0;
+    t->fortranOrder = pt->fortranOrder;
+    if (pt->byteOrder == 0 || pt->typeStrSize >= sizeof(descr)
+        || pt->ndims > ZL_NUMPY_MAX_DIMS || pt->ndims > ZL_PICKLE_MAX_DIMS) {
+        return;
+    }
+    descr[0] = pt->byteOrder;
+    for (size_t i = 0; i < pt->typeStrSize; ++i) {
+        descr[1 + i] = pt->typeStr[i];
+    }
+    NP_parseDescr(descr, pt->typeStrSize + 1, t);
+    t->ndims = pt->ndims;
+    for (uint32_t d = 0; d < pt->ndims; ++d) {
+        t->shape[d] = pt->shape[d];
+    }
+    if (t->kind != 0 && NP_byteSize(t) != (uint64_t)pt->size) {
+        t->kind = 0;
+    }
+}
+
+static ZL_Report NP_lexPickle(NP_Out* out, const char* src, size_t srcSize)
+{
+    ZL_RESULT_DECLARE_SCOPE_REPORT(out->errCtx);
+    ZL_PickleLexer lexer;
+    ZL_PickleLexer_init(&lexer, src, srcSize);
+    while (!ZL_PickleLexer_finished(&lexer)) {
+        ZL_PickleToken pickleTokens[8];
+        const size_t nbPickleTokens =
+                ZL_PickleLexer_lex(&lexer, pickleTokens, 8);
+        for (size_t i = 0; i < nbPickleTokens; ++i) {
+            const ZL_PickleToken* const pt = &pickleTokens[i];
+            ZL_NumPyToken t = { .ptr = pt->ptr, .size = pt->size };
+            switch (pt->type) {
+                case ZL_PickleTokenType_array:
+                    if (pt->size >= ZL_NUMPY_MIN_PICKLED_ARRAY_SIZE) {
+                        t.type = ZL_NumPyTokenType_array;
+                        NP_describePickled(pt, &t);
+                    } else {
+                        t.type = ZL_NumPyTokenType_header;
+                    }
+                    break;
+                case ZL_PickleTokenType_opcodes:
+                    t.type = ZL_NumPyTokenType_header;
+                    break;
+                case ZL_PickleTokenType_trailing:
+                default:
+                    t.type = ZL_NumPyTokenType_gap;
+                    break;
+            }
+            ZL_ERR_IF_ERR(NP_emit(out, &t));
         }
     }
     return ZL_returnSuccess();
@@ -527,6 +589,8 @@ ZL_Report ZL_NumPy_lex(
                 graph_parser_malformedInput,
                 "malformed .npy header");
         ZL_ERR_IF_ERR(NP_emitNpy(&out, s, srcSize, headerSize, &array));
+    } else if (ZL_PickleLexer_isPickle(s, srcSize)) {
+        ZL_ERR_IF_ERR(NP_lexPickle(&out, s, srcSize));
     } else {
         ZL_ERR_IF_ERR(NP_lexNpz(&out, s, srcSize));
     }

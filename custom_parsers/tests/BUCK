@@ -5,7 +5,7 @@ load("@fbcode_macros//build_defs:custom_unittest.bzl", "custom_unittest")
 load("@fbcode_macros//build_defs:fbcode_configured_alias.bzl", "fbcode_configured_alias")
 load("@fbcode_macros//build_defs:python_binary.bzl", "python_binary")
 load("@fbsource//tools/build_defs:default_platform_defs.bzl", "get_host_target_platform")
-load("../../defs.bzl", "zs_cxxbinary", "zs_fuzzers", "zs_unittest")
+load("../../defs.bzl", "zs_cxxbinary", "zs_fuzzers", "zs_library", "zs_unittest")
 
 oncall("data_compression")
 
@@ -37,6 +37,24 @@ zs_cxxbinary(
         "../csv:csv_parser",
         "../shared_components:numeric_graphs",
         "../shared_components:string_graphs",
+    ],
+)
+
+zs_library(
+    name = "pickle_builder",
+    headers = ["pickle_builder.h"],
+)
+
+zs_unittest(
+    # @autodeps-skip
+    name = "test_pickle_lexer",
+    srcs = [
+        "test_pickle_lexer.cpp",
+    ],
+    deps = [
+        "..:pickle_lexer",
+        "../..:zstronglib",
+        ":pickle_builder",
     ],
 )
 
@@ -107,6 +125,20 @@ zs_fuzzers(
     deps = [
         "..:pytorch_model_parser",
         "..:zip_lexer",
+        "../..:zstronglib",
+        "fbsource//xplat/security/lionhead/utils/lib_ftest:lib",
+    ],
+)
+
+zs_fuzzers(
+    srcs = [
+        "fuzz_pickle_lexer.cpp",
+    ],
+    ftest_names = [
+        ("PickleLexerTest", "FuzzLexer"),
+    ],
+    deps = [
+        "..:pickle_lexer",
         "../..:zstronglib",
         "fbsource//xplat/security/lionhead/utils/lib_ftest:lib",
     ],

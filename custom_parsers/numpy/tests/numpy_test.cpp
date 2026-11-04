@@ -11,6 +11,7 @@
 #include "custom_parsers/numpy/numpy_lexer.h"
 #include "custom_parsers/numpy/numpy_parser.h"
 #include "custom_parsers/numpy/tests/numpy_builder.h"
+#include "custom_parsers/tests/pickle_builder.h"
 #include "openzl/cpp/CompressIntrospectionHooks.hpp"
 #include "openzl/openzl.hpp"
 
@@ -22,6 +23,8 @@ using testing::buildNpyWithDict;
 using testing::buildNpz;
 using testing::buildZip;
 using testing::NpyArraySpec;
+using testing::pickleArrays;
+using testing::PickledArray;
 using testing::pseudoRandomBytes;
 using testing::ZipMember;
 
@@ -326,6 +329,71 @@ TEST(NumPyLexerTest, RejectsArchivesWithTooManyMembers)
             ZL_ErrorCode_graph_parser_unhandledInput);
 }
 
+TEST(NumPyLexerTest, ReadsTheArraysOfPickles)
+{
+    const PickledArray f4{ "f4", { 64, 128 }, pseudoRandomBytes(32768, 1) };
+    const PickledArray u2{ "u2", { 10000 }, pseudoRandomBytes(20000, 2) };
+    // Smaller than ZL_NUMPY_MIN_PICKLED_ARRAY_SIZE: stays in the opcodes
+    const PickledArray small{ "f4", { 4 }, pseudoRandomBytes(16, 3) };
+    const auto file =
+            pickleArrays({ { "a", f4 }, { "b", u2 }, { "c", small } }, 4);
+    const size_t offA                      = file.find(f4.data);
+    const size_t offB                      = file.find(u2.data);
+    const size_t endB                      = offB + u2.data.size();
+    const std::vector<LexedToken> expected = {
+        nonArray(ZL_NumPyTokenType_header, 0, offA),
+        { ZL_NumPyTokenType_array,
+          offA,
+          32768,
+          "",
+          'f',
+          4,
+          false,
+          { 64, 128 } },
+        nonArray(ZL_NumPyTokenType_header, offA + 32768, offB - offA - 32768),
+        { ZL_NumPyTokenType_array, offB, 20000, "", 'u', 2, false, { 10000 } },
+        nonArray(ZL_NumPyTokenType_header, endB, file.size() - endB),
+    };
+
+    const auto result = lex(file);
+
+    ASSERT_EQ(result.error, ZL_ErrorCode_no_error);
+    EXPECT_EQ(result.tokens, expected);
+}
+
+TEST(NumPyLexerTest, ReportsPickledArraysItCannotDescribeWithKindZero)
+{
+    const auto data = pseudoRandomBytes(32768, 1);
+    PickledArray records{ "V8", { 4096 }, data, '|' };
+    records.fieldNames                     = { "x", "y" };
+    const std::vector<PickledArray> arrays = {
+        { "f4", { 8192 }, data, '>' },
+        { "f8", { 8192 }, data }, // 4096 elements of 8 bytes
+        records,
+    };
+    for (const auto& array : arrays) {
+        const auto result = lex(pickleArrays({ { "a", array } }, 3));
+        ASSERT_EQ(result.error, ZL_ErrorCode_no_error);
+        ASSERT_EQ(result.tokens.size(), 3u) << array.typeStr;
+        EXPECT_EQ(result.tokens[1].type, ZL_NumPyTokenType_array);
+        EXPECT_EQ(result.tokens[1].size, data.size());
+        EXPECT_EQ(result.tokens[1].kind, 0) << array.typeStr;
+    }
+}
+
+TEST(NumPyLexerTest, LeavesTheBytesPastAPickleInAGap)
+{
+    const auto pickle =
+            pickleArrays({ { "a", { "u1", { 3 }, std::string(3, 'x') } } }, 2);
+    const auto file                        = pickle + "not a pickle";
+    const std::vector<LexedToken> expected = {
+        nonArray(ZL_NumPyTokenType_header, 0, pickle.size()),
+        nonArray(ZL_NumPyTokenType_gap, pickle.size(), 12),
+    };
+
+    EXPECT_EQ(lex(file).tokens, expected);
+}
+
 /// Arrays of every class, and arrays coded as raw bytes.
 std::string mixedArchive()
 {
@@ -396,6 +464,41 @@ TEST_F(NumPyCompressorTest, RoundTripsNpyFilesAndArchives)
     expectRoundTrip(
             buildNpy({ "<f4", { 64, 48 }, pseudoRandomBytes(12288, 1) }));
     expectRoundTrip(buildNpy({ "<c16", { 7 }, pseudoRandomBytes(112, 2) }, 2));
+}
+
+/// A pickle of arrays of several classes, small and large.
+std::string mixedPickle(int protocol, bool python2 = false)
+{
+    return pickleArrays(
+            {
+                    { "f4",
+                      { "f4", { 64, 128 }, pseudoRandomBytes(32768, 1) } },
+                    { "i8", { "i8", { 3000 }, pseudoRandomBytes(24000, 2) } },
+                    { "u1", { "u1", { 20000 }, pseudoRandomBytes(20000, 3) } },
+                    { "small", { "f8", { 3 }, pseudoRandomBytes(24, 4) } },
+                    { "be",
+                      { "f4", { 5000 }, pseudoRandomBytes(20000, 5), '>' } },
+                    { "fortran",
+                      { "f4",
+                        { 100, 50 },
+                        pseudoRandomBytes(20000, 6),
+                        '<',
+                        true } },
+            },
+            protocol,
+            python2);
+}
+
+TEST_F(NumPyCompressorTest, RoundTripsPickles)
+{
+    useChunkSize(ZL_NUMPY_DEFAULT_CHUNK_SIZE);
+    for (const int protocol : { 2, 3, 4, 5 }) {
+        expectRoundTrip(mixedPickle(protocol));
+    }
+    const auto python2 = mixedPickle(2, true);
+    expectRoundTrip(python2);
+    expectRoundTrip(python2.substr(0, python2.size() / 2));
+    expectRoundTrip(python2 + mixedPickle(5) + "not a pickle");
 }
 
 TEST_F(NumPyCompressorTest, RoundTripsWithChunksSmallerThanArrays)
@@ -476,6 +579,21 @@ TEST_F(NumPyCompressorTest, SendsArraysOfNumbersToTheNumericTransformer)
 
     EXPECT_GT(onNumbers.count, 0u);
     EXPECT_EQ(onStrings.count, 0u);
+}
+
+TEST_F(NumPyCompressorTest, SendsPickledArraysToTheNumericTransformer)
+{
+    const auto pickle = pickleArrays(
+            { { "a", { "i4", { 128, 128 }, pseudoRandomBytes(1 << 16, 1) } } },
+            4);
+    useChunkSize(ZL_NUMPY_DEFAULT_CHUNK_SIZE);
+    GraphCounter counter(ZL_GRAPH_TRANSFORMER_NUMERIC);
+
+    attachHooks(counter);
+    expectRoundTrip(pickle);
+
+    EXPECT_GT(counter.count, 0u);
+    EXPECT_TRUE(get_warning_strings(cctx_).empty());
 }
 
 TEST_F(NumPyCompressorTest, SerializedCompressorCanBeReloaded)

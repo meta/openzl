@@ -14,6 +14,7 @@ zs_library(
         ["*.h"],
     ),
     deps = [
+        "..:pickle_lexer",
         "..:zip_lexer",
         "../shared_components:tensor_components",
     ],

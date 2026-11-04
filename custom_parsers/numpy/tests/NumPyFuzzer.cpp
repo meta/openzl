@@ -8,6 +8,7 @@
 
 #include "custom_parsers/numpy/numpy_parser.h"
 #include "custom_parsers/numpy/tests/numpy_builder.h"
+#include "custom_parsers/tests/pickle_builder.h"
 #include "openzl/openzl.hpp"
 #include "tests/datagen/random_producer/LionheadFDPWrapper.h"
 
@@ -87,16 +88,58 @@ testing::NpyArraySpec randomArray(RW& rw)
              rw.usize_range("fortranOrder", 0, 3) == 0 };
 }
 
-/// Mostly valid .npy files and archives, to exercise segmentation and chunking.
+/// The array as NumPy pickles it: structured descrs become records of 5 bytes
+/// with two fields.
+testing::PickledArray toPickled(testing::NpyArraySpec a)
+{
+    testing::PickledArray p{ a.descr.substr(1),
+                             std::move(a.shape),
+                             std::move(a.data),
+                             a.descr[0],
+                             a.fortranOrder };
+    if (a.descr.starts_with("[")) {
+        p.typeStr    = "V5";
+        p.byteOrder  = '|';
+        p.fieldNames = { "x", "y" };
+    }
+    return p;
+}
+
+/// A pickle of a dict of arrays, sometimes followed by another one.
+template <class RW>
+std::string randomPickle(RW& rw)
+{
+    std::string file;
+    const size_t nbPickles = rw.usize_range("nbPickles", 1, 2);
+    for (size_t p = 0; p < nbPickles; ++p) {
+        const int protocol = (int)rw.usize_range("protocol", 2, 5);
+        const bool python2 = protocol == 2 && rw.usize_range("python2", 0, 1);
+        std::vector<std::pair<std::string, testing::PickledArray>> arrays;
+        const size_t nbArrays = rw.usize_range("nbArrays", 0, 12);
+        for (size_t i = 0; i < nbArrays; ++i) {
+            arrays.emplace_back(
+                    "a" + std::to_string(i), toPickled(randomArray(rw)));
+            arrays.back().second.dtypeId = (int)rw.usize_range("dtypeId", 0, 2);
+        }
+        file += testing::pickleArrays(arrays, protocol, python2);
+    }
+    return file;
+}
+
+/// Mostly valid .npy files, archives and pickles, to exercise segmentation and
+/// chunking.
 FUZZ_F(NumPyTest, StructuredInputFuzzer)
 {
     auto rw = rwFromFDP(f);
     const auto chunkSize =
             rw.u32_range("chunkSize", 2 * ZL_MIN_CHUNK_SIZE, 1 << 18);
     std::string file;
-    if (rw.usize_range("npy", 0, 3) == 0) {
+    const size_t container = rw.usize_range("container", 0, 5);
+    if (container == 0) {
         file = testing::buildNpy(
                 randomArray(rw), (uint8_t)rw.usize_range("major", 1, 3));
+    } else if (container == 1) {
+        file = randomPickle(rw);
     } else {
         std::vector<testing::ZipMember> members;
         const size_t nbMembers = rw.usize_range("nbMembers", 0, 12);

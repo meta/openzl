@@ -237,6 +237,31 @@ static void addIntProfile(
             std::move(data),
             true);
 }
+
+/// The numpy and pickle profiles build the same graph.
+static void addNumPyProfile(
+        std::map<std::string, std::shared_ptr<CompressProfile>>& mp,
+        const std::string& name,
+        const std::string& description)
+{
+    mp[name] = std::make_shared<CompressProfile>(
+            name,
+            description,
+            [name](ZL_Compressor* comp, void*, const ProfileArgs& args) {
+                const auto graph = ZL_NumPy_registerGraph(
+                        comp,
+                        args.chunkSize().value_or(ZL_NUMPY_DEFAULT_CHUNK_SIZE));
+                if (ZL_RES_isError(graph)) {
+                    throw InvalidArgsException(
+                            "Failed to build the " + name + " profile: "
+                            + ZL_Compressor_getErrorContextString_fromError(
+                                    comp, ZL_RES_error(graph)));
+                }
+                return ZL_RES_value(graph);
+            },
+            nullptr,
+            true);
+}
 } // namespace
 
 static ZL_RESULT_OF(ZL_GraphID) extractFolderOfCompressors(
@@ -479,26 +504,14 @@ compressProfiles()
                 nullptr,
                 true);
 
-        std::string kNumPyName = "numpy";
-        mp[kNumPyName]         = std::make_shared<CompressProfile>(
-                kNumPyName,
-                "NumPy array (.npy) or archive of arrays (.npz). Arrays deflated by np.savez_compressed are not inflated, so they gain nothing.",
-                [](ZL_Compressor* comp, void*, const ProfileArgs& args) {
-                    const auto graph = ZL_NumPy_registerGraph(
-                            comp,
-                            args.chunkSize().value_or(
-                                    ZL_NUMPY_DEFAULT_CHUNK_SIZE));
-                    if (ZL_RES_isError(graph)) {
-                        throw InvalidArgsException(
-                                std::string(
-                                        "Failed to build the numpy profile: ")
-                                + ZL_Compressor_getErrorContextString_fromError(
-                                        comp, ZL_RES_error(graph)));
-                    }
-                    return ZL_RES_value(graph);
-                },
-                nullptr,
-                true);
+        addNumPyProfile(
+                mp,
+                "numpy",
+                "NumPy array (.npy), archive of arrays (.npz), or pickle holding NumPy arrays. Arrays deflated by np.savez_compressed are not inflated, so they gain nothing.");
+        addNumPyProfile(
+                mp,
+                "pickle",
+                "Python pickle (protocols 2 to 5). The NumPy arrays it holds, such as those of pandas DataFrames, are compressed as numbers.");
 
         addIntProfile(mp, IntSignedness::SIGNED, 8);
         addIntProfile(mp, IntSignedness::UNSIGNED, 8);

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "custom_parsers/numpy/tests/numpy_builder.h"
+#include "custom_parsers/tests/pickle_builder.h"
 
 namespace {
 using namespace openzl::custom_parsers::testing;
@@ -41,6 +42,37 @@ std::vector<NpyArraySpec> sampleArrays()
     };
 }
 
+/// Dicts of arrays as `pickle.dumps` writes them, with every protocol, and two
+/// pickles in a row.
+std::vector<std::string> samplePickles()
+{
+    const std::vector<std::pair<std::string, PickledArray>> arrays = {
+        { "f4", { "f4", { 64, 48 }, pseudoRandomBytes(12288, 1) } },
+        { "large", { "f4", { 24576 }, pseudoRandomBytes(98304, 2) } },
+        { "f8", { "f8", { 10, 10 }, pseudoRandomBytes(800, 3), '<', true } },
+        { "u1", { "u1", { 60 }, pseudoRandomBytes(60, 4), '|' } },
+        { "c16", { "c16", { 7 }, pseudoRandomBytes(112, 5) } },
+        { "big_endian", { "f4", { 25 }, pseudoRandomBytes(100, 6), '>' } },
+        { "U3", { "U3", { 10 }, pseudoRandomBytes(120, 7) } },
+        { "records",
+          { "V5",
+            { 20 },
+            pseudoRandomBytes(100, 8),
+            '|',
+            false,
+            { "x", "y" } } },
+        { "other_f4",
+          { "f4", { 16 }, pseudoRandomBytes(64, 9), '<', false, {}, 1 } },
+    };
+    std::vector<std::string> pickles;
+    for (int protocol = 2; protocol <= 5; ++protocol) {
+        pickles.push_back(pickleArrays(arrays, protocol));
+    }
+    pickles.push_back(pickleArrays(arrays, 2, true));
+    pickles.push_back(pickleArrays(arrays, 4) + pickleArrays(arrays, 5));
+    return pickles;
+}
+
 std::vector<std::string> sampleFiles()
 {
     const auto arrays = sampleArrays();
@@ -54,6 +86,9 @@ std::vector<std::string> sampleFiles()
     files.push_back(buildNpy(arrays[0], 3));
     files.push_back(buildNpz(named));
     files.push_back(buildZip({ { "arr_0.npy", buildNpy(arrays[0]), 8 } }));
+    for (auto& pickle : samplePickles()) {
+        files.push_back(std::move(pickle));
+    }
     return files;
 }
 
