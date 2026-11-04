@@ -17,6 +17,7 @@ zs_library(
         "../cpp:openzl_cpp",
         "csv:csv_parser",
         "gguf:gguf_parser",
+        "numpy:numpy_parser",
         "onnx:onnx_parser",
         "parquet:parquet_graph",
         "safetensors:safetensors_parser",
