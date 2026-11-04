@@ -109,7 +109,8 @@ TEST(CudaDeviceTest, RejectsCodecsThatItDoesNotImplement)
     EXPECT_EQ(currentDevice(), callerDevice);
 }
 
-ZL_Report failWithoutCudaCall(poly::span<const BoundCodecRun>, void*)
+ZL_Report
+failWithoutCudaCall(poly::span<const BoundCodecRun>, void*, size_t, void*)
 {
     ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
     ZL_ERR(transform_executionFailure, "injected failure");
@@ -121,14 +122,16 @@ TEST(CudaDeviceTest, KeepsAnErrorThatTheCallerLeftPending)
     // error that it did not cause. A dev build links a separate CUDA runtime,
     // with its own pending error, into each library, so only a build with one
     // runtime, such as opt, can catch that.
-    const DecodeKernel failing{ "failing", nullptr, failWithoutCudaCall };
+    const DecodeKernel failing{
+        "failing", nullptr, nullptr, failWithoutCudaCall
+    };
     const BoundCodecRun run{};
     const std::unique_ptr<Device> device = makeCurrentCudaDevice();
     ASSERT_NE(device, nullptr);
     ASSERT_EQ(cudaSetDevice(-1), cudaErrorInvalidDevice);
 
     ZL_Report const result = device->defaultStream().decodeBatch(
-            failing, poly::span<const BoundCodecRun>{ &run, 1 });
+            failing, poly::span<const BoundCodecRun>{ &run, 1 }, nullptr, 0);
 
     EXPECT_EQ(ZL_errorCode(result), ZL_ErrorCode_transform_executionFailure);
     EXPECT_EQ(cudaGetLastError(), cudaErrorInvalidDevice);

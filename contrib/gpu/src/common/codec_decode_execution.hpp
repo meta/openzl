@@ -33,10 +33,10 @@ struct OutputStreamInfo {
 /**
  * One planned codec run, without addresses.
  *
- * Binding chooses each run's kernel from this info, before any memory is
- * allocated. Every span is non-owning host memory. Inputs are in decoder
- * argument order, and outputs are in regenerated-stream order, as in
- * @c PlannedCodecRun.
+ * Binding chooses each run's kernel and sizes its scratch from this info,
+ * before any memory is allocated. Every span is non-owning host memory. Inputs
+ * are in decoder argument order, and outputs are in regenerated-stream order,
+ * as in @c PlannedCodecRun.
  */
 struct CodecRunInfo {
     /// Exact transform namespace and ID decoded from the frame node.
@@ -83,6 +83,13 @@ struct BoundCodecRun {
     poly::span<const BoundOutputStream> outputs;
 };
 
+/** Device scratch that a kernel needs for one batch of runs. */
+struct ScratchSize {
+    size_t bytes = 0;
+    /// Power of two that the scratch address must be a multiple of.
+    size_t alignment = 1;
+};
+
 /**
  * One implementation of a codec on one device runtime.
  *
@@ -100,20 +107,44 @@ struct DecodeKernel {
      */
     bool (*accepts)(const CodecRunInfo& run);
     /**
+     * Sets @p size to the scratch that decoding @p runs as one batch needs.
+     * The size may be an upper bound. Every run was accepted. Must not access
+     * device memory or wait for it.
+     *
+     * @returns Success, or an error that stops the decode before any memory
+     * is allocated. A kernel that cannot compute a maximum scratch size from
+     * @p runs returns @c temporaryLibraryLimitation, so the caller can decode
+     * on the CPU instead.
+     */
+    ZL_Report (*scratchSize)(
+            poly::span<const CodecRunInfo> runs,
+            ScratchSize& size);
+    /**
      * Enqueues the decode of every run in @p runs on the runtime's native
      * @p stream, which is current, and returns without waiting for the device.
-     * Every run was accepted. @p runs may be reused when this returns.
+     *
+     * @p runs are the runs that @c scratchSize sized, with addresses.
+     * @p scratch_d holds @p scratchBytes bytes at the reported alignment, at
+     * least the reported size, and is null when that size is 0. It stays valid
+     * until the work completes. @p runs may be reused when this returns.
+     *
+     * Must not allocate device memory. The layout covers only the memory that
+     * planning reports, so a kernel keeps its temporary data in @p scratch_d.
      */
-    ZL_Report (*decode)(poly::span<const BoundCodecRun> runs, void* stream);
+    ZL_Report (*decode)(
+            poly::span<const BoundCodecRun> runs,
+            void* scratch_d,
+            size_t scratchBytes,
+            void* stream);
 };
 
 /**
  * Runs of one wave that one kernel decodes in one call.
  *
- * The work schedule puts each run in a wave after its producers, and the runs
- * of one transform in a wave form a work group. A kernel decodes one codec, so
- * a batch never mixes work groups. A work group whose runs need different
- * kernels, such as two element types, splits into one batch for each kernel.
+ * The work schedule puts each run in a wave after its producers, so the runs of
+ * one wave are independent. A kernel decodes one codec, so a batch never mixes
+ * codecs. Runs of one codec that need different kernels, such as two element
+ * types, go to different batches.
  */
 struct DecodeBatch {
     const DecodeKernel* kernel = nullptr;

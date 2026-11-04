@@ -57,6 +57,8 @@ ZL_Report chooseDecodeBatches(
 ZL_Report decodeBatchWith(
         const DecodeKernel& kernel,
         poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
         void* stream);
 
 } // namespace openzl::gpu

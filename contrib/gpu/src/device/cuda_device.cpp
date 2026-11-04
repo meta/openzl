@@ -284,12 +284,15 @@ class CudaDevice final : public Device {
     ZL_Report doDecodeBatch(
             const DecodeKernel& kernel,
             poly::span<const BoundCodecRun> runs,
+            void* scratch_d,
+            size_t scratchBytes,
             void* native) override
     {
         // Clears only an error that the batch set. An error that the caller
         // left pending before the call stays for the caller.
         cudaError_t const pending = cudaPeekAtLastError();
-        ZL_Report const result    = Device::doDecodeBatch(kernel, runs, native);
+        ZL_Report const result    = Device::doDecodeBatch(
+                kernel, runs, scratch_d, scratchBytes, native);
         if (cudaPeekAtLastError() != pending) {
             clearLastError();
         }

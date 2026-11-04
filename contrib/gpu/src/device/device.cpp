@@ -26,9 +26,12 @@ ZL_Report Stream::copyToHostAndSynchronize(
 
 ZL_Report Stream::decodeBatch(
         const DecodeKernel& kernel,
-        poly::span<const BoundCodecRun> runs) const
+        poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes) const
 {
-    return device().doDecodeBatch(kernel, runs, native_);
+    return device().doDecodeBatch(
+            kernel, runs, scratch_d, scratchBytes, native_);
 }
 
 ZL_Report Stream::allocate(size_t size, size_t alignment, void*& ptr_d) const
@@ -126,9 +129,11 @@ ZL_Report Device::doJoin(void*, poly::span<const Stream>) noexcept
 ZL_Report Device::doDecodeBatch(
         const DecodeKernel& kernel,
         poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
         void* native)
 {
-    return decodeBatchWith(kernel, runs, native);
+    return decodeBatchWith(kernel, runs, scratch_d, scratchBytes, native);
 }
 
 } // namespace openzl::gpu

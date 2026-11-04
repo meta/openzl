@@ -194,6 +194,48 @@ void bf16DeconDecode(
     launchSlices(slices_d.get(), numSlices, stream);
 }
 
+size_t bf16DeconDecodeScratchBytes(
+        const size_t* nbElts_h,
+        uint32_t numRanges,
+        size_t maxSliceElts)
+{
+    validateMaxSliceElts(maxSliceElts);
+    size_t numSlices = 0;
+    for (uint32_t c = 0; c < numRanges; ++c) {
+        numSlices += sliceCount(nbElts_h[c], maxSliceElts);
+    }
+    return numSlices * sizeof(Bf16DeconElementRange);
+}
+
+void bf16DeconDecode(
+        const Bf16DeconElementRange* ranges_h,
+        uint32_t numRanges,
+        size_t maxSliceElts,
+        void* scratch_d,
+        size_t scratchBytes,
+        cudaStream_t stream)
+{
+    if (numRanges == 0) {
+        return;
+    }
+    validateMaxSliceElts(maxSliceElts);
+    const std::vector<Bf16DeconElementRange> slices =
+            splitIntoSlices(ranges_h, numRanges, maxSliceElts);
+    if (slices.empty()) {
+        return;
+    }
+    const size_t segBytes = slices.size() * sizeof(Bf16DeconElementRange);
+    if (scratchBytes < segBytes) {
+        throw std::runtime_error(
+                "bf16 decode: scratch has " + std::to_string(scratchBytes)
+                + " bytes, needs " + std::to_string(segBytes));
+    }
+    auto* const slices_d = static_cast<Bf16DeconElementRange*>(scratch_d);
+    ZL_CUDA_CHECK(cudaMemcpyAsync(
+            slices_d, slices.data(), segBytes, cudaMemcpyHostToDevice, stream));
+    launchSlices(slices_d, (uint32_t)slices.size(), stream);
+}
+
 KernelLaunchInfo bf16DeconDecodeLaunchInfo()
 {
     return launchInfoFor((const void*)decodeSlicesKernel, kThreads);

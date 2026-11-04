@@ -60,10 +60,12 @@ class PlannedHostFrame {
             }
         }
         requirements_ = valueOf(buildDecodeStorageRequirements(plan_));
-        layout_       = valueOf(buildMonotonicAllocationLayout(requirements_));
+        addScratchRequirements(batches_, requirements_);
+        layout_ = valueOf(buildMonotonicAllocationLayout(requirements_));
         for (const AllocationArena& arena : layout_.arenas) {
             // Operator new aligns to at least 16 bytes, which covers every
-            // arena alignment of these frames.
+            // stream arena alignment of these frames. Scratch tests check
+            // offsets from the workspace base instead.
             arenas_.emplace_back(arena.size);
             arenaBases_d_.push_back(arenas_.back().data());
         }
@@ -84,6 +86,17 @@ class PlannedHostFrame {
         return plan_;
     }
 
+    /// Base address of the workspace arena, or nullptr if there is none.
+    const std::byte* workspace() const
+    {
+        for (size_t i = 0; i < layout_.arenas.size(); ++i) {
+            if (layout_.arenas.at(i).arenaClass == ArenaClass::StreamArena) {
+                return arenaBases_d_.at(i);
+            }
+        }
+        return nullptr;
+    }
+
     /// Base address of the arena that holds final output 0's data.
     const std::byte* destination_d() const
     {
@@ -100,8 +113,8 @@ class PlannedHostFrame {
 
    private:
     testkit::StagedHostFrame staged_;
-    DecodePlan plan_;
     std::vector<PlannedDecodeBatch> batches_;
+    DecodePlan plan_;
     ExecutionRequirements requirements_;
     AllocationLayout layout_;
     std::vector<std::vector<std::byte>> arenas_;
@@ -361,6 +374,85 @@ TEST(DecodeBindingTest, CopiesEachChunkAfterThePreviousOne)
     EXPECT_EQ(
             bytesAt(second.src_d, second.size),
             bytesAt(values.data() + first.size, second.size));
+}
+
+TEST(DecodeBindingTest, PlacesEachBatchScratchInTheWorkspace)
+{
+    // Each batch that needs scratch gets its own region of the workspace. This
+    // fails if a region is misaligned from the workspace base, if two regions
+    // overlap, or if a batch without scratch gets an address.
+    const std::string values(1000, '\x2a');
+    Compressor compressor;
+    compressor.setParameter(CParam::FormatVersion, ZL_MAX_FORMAT_VERSION);
+    std::vector<PlannedDecodeBatch> batches(3);
+    batches[0].scratch = { .bytes = 100, .alignment = 512 };
+    batches[2].scratch = { .bytes = 40, .alignment = 64 };
+    const PlannedHostFrame frame{
+        testkit::makeFrameWithGraph(
+                compressor,
+                graphs::Store{}(),
+                Input::refSerial(values.data(), values.size())),
+        batches
+    };
+
+    const BoundDecode bound = frame.bind();
+
+    ASSERT_EQ(bound.batches.size(), 3);
+    ASSERT_NE(frame.workspace(), nullptr);
+    const size_t first =
+            static_cast<size_t>(bound.batches[0].scratch_d - frame.workspace());
+    const size_t third =
+            static_cast<size_t>(bound.batches[2].scratch_d - frame.workspace());
+    EXPECT_EQ(first % 512, 0);
+    EXPECT_EQ(bound.batches[1].scratch_d, nullptr);
+    EXPECT_EQ(third % 64, 0);
+    EXPECT_GE(third, first + 100);
+}
+
+TEST(DecodeBindingTest, AddsEachScratchAsBatchScratchForTheWholeDecode)
+{
+    // A layout tells scratch from stream data by its content, and the runs of a
+    // batch have no order in the dependency graph. This fails if a scratch
+    // requirement claims to be a stream region, leaves the workspace, or lives
+    // for less than the whole decode.
+    const StorageRequirement stream{
+        .arena = ArenaClass::StreamArena,
+        .size  = 8,
+    };
+    ExecutionRequirements requirements;
+    requirements.requirements.push_back(stream);
+    std::vector<PlannedDecodeBatch> batches(3);
+    batches[0].scratch = { .bytes = 100, .alignment = 512 };
+    batches[2].scratch = { .bytes = 40, .alignment = 64 };
+
+    addScratchRequirements(batches, requirements);
+
+    const StorageLifetime wholeDecode{
+        .firstUse = DecodeExecutionStage::decodeStart(),
+        .lastUse  = DecodeExecutionStage::decodeEnd(),
+    };
+    const std::vector<StorageRequirement> expected{
+        stream,
+        {
+                .content   = StorageContent::BatchScratch,
+                .arena     = ArenaClass::StreamArena,
+                .lifetime  = wholeDecode,
+                .size      = 100,
+                .alignment = 512,
+        },
+        {
+                .content   = StorageContent::BatchScratch,
+                .arena     = ArenaClass::StreamArena,
+                .lifetime  = wholeDecode,
+                .size      = 40,
+                .alignment = 64,
+        },
+    };
+    EXPECT_EQ(requirements.requirements, expected);
+    const std::vector<std::optional<size_t>> expectedIndexes{ 1,
+                                                              std::nullopt,
+                                                              2 };
+    EXPECT_EQ(requirements.batchScratch, expectedIndexes);
 }
 
 } // namespace

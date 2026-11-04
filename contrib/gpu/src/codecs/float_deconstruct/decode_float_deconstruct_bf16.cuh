@@ -62,6 +62,27 @@ void bf16DeconDecode(
         size_t maxSliceElts,
         cudaStream_t stream);
 
+// Device bytes of the slice descriptors that bf16DeconDecode stages for
+// numRanges ranges of nbElts_h[c] elements each. Throws as bf16DeconDecode
+// does for an invalid maxSliceElts.
+size_t bf16DeconDecodeScratchBytes(
+        const size_t* nbElts_h,
+        uint32_t numRanges,
+        size_t maxSliceElts);
+
+// Like the one-shot bf16DeconDecode, but stages the slice descriptors in
+// scratch_d, which the caller allocates and keeps until the stream work
+// completes. scratch_d holds scratchBytes bytes, at least
+// bf16DeconDecodeScratchBytes of the same ranges, aligned for
+// Bf16DeconElementRange. Throws if scratchBytes is too small.
+void bf16DeconDecode(
+        const Bf16DeconElementRange* ranges_h,
+        uint32_t numRanges,
+        size_t maxSliceElts,
+        void* scratch_d,
+        size_t scratchBytes,
+        cudaStream_t stream);
+
 // Occupancy/launch metadata for the decode kernel, so a benchmark harness can
 // report theoretical occupancy without seeing the kernel internals.
 // KernelLaunchInfo is the shared descriptor from common/cuda_launch.cuh.

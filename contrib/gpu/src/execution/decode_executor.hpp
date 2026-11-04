@@ -26,10 +26,11 @@ namespace openzl::gpu {
  */
 struct PlannedDecode {
     DecodePlan plan;
-    /// The kernel of each batch, in wave order.
+    /// The kernel and scratch of each batch, in wave order.
     std::vector<PlannedDecodeBatch> batches;
     /// The range of @c batches that each wave holds, in wave order.
     std::vector<IndexRange> waves;
+    /// Stream regions, then the scratch of each batch.
     ExecutionRequirements requirements;
     AllocationLayout layout;
     /// Bytes that the decode writes to the caller's output.
@@ -39,8 +40,9 @@ struct PlannedDecode {
 /**
  * Plans, schedules, and lays out the decode of @p chunks on @p device.
  *
- * Chooses the kernel of every codec run (binding, part 1). Allocates no
- * device memory.
+ * Chooses the kernel of every codec run and sizes the scratch of each batch
+ * (binding, part 1), so the layout covers all the memory that the decode
+ * needs. Allocates no device memory.
  *
  * @param device The device that will decode. It must outlive the result.
  * @param chunks Prepared chunks of one frame, as @c planDecode takes them.
@@ -58,12 +60,12 @@ Result<PlannedDecode> planDecodeExecution(
  * Enqueues @p decode on @p stream and returns without waiting for the device.
  *
  * Allocates the workspace on the device of @p stream and binds every codec
- * run to an address (binding, part 2). It then enqueues the batches in wave
- * order, and last the copies of final outputs that the frame stores or that
- * refer to another stream. The batches of one wave are independent: when a
- * wave has several, each runs on its own branch of @p stream
- * (@c Stream::fork), and @p stream waits for all of them before the next wave
- * (@c Stream::join).
+ * run and batch scratch to an address (binding, part 2). It then enqueues the
+ * batches in wave order, and last the copies of final outputs that the frame
+ * stores or that refer to another stream. The batches of one wave are
+ * independent: when a wave has several, each runs on its own branch of
+ * @p stream (@c Stream::fork), and @p stream waits for all of them before the
+ * next wave (@c Stream::join).
  *
  * @param stream A stream of the device that @p decode was planned for.
  * @param chunks The chunks that @p decode was planned from. They and their

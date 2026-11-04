@@ -130,15 +130,29 @@ const DecodeKernel& kernelNamed(const std::string& name)
     throw std::runtime_error("no kernel named " + name);
 }
 
-/// Decodes @p runs as one batch with @p kernel on the default stream and waits.
+/**
+ * Decodes @p runs as one batch with @p kernel on the default stream, with
+ * scratch of the size that @c DecodeKernel::scratchSize reports, and waits.
+ */
 ZL_Report decodeBatch(
         const DecodeKernel& kernel,
         poly::span<const BoundCodecRun> runs)
 {
-    ZL_Report const result = kernel.decode(runs, nullptr);
+    ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
+    std::vector<CodecRunInfo> info;
+    for (const BoundCodecRun& run : runs) {
+        info.push_back(run.info);
+    }
+    ScratchSize size;
+    ZL_ERR_IF_ERR(kernel.scratchSize(info, size));
+    // cudaMalloc aligns to 256 bytes, which covers every scratch alignment.
+    const DevicePtr<std::byte> scratch_d = deviceAlloc<std::byte>(size.bytes);
+    ZL_Report const result =
+            kernel.decode(runs, scratch_d.get(), size.bytes, nullptr);
     ZL_CUDA_CHECK(cudaDeviceSynchronize());
     return result;
 }
+
 /** Runs of the given sizes and offsets, and the values each must decode to. */
 struct RunBatch {
     RunBatch(
@@ -242,9 +256,14 @@ TEST(DecodeFloatDeconstructCudaTest, IgnoresAnErrorThatTheCallerLeftPending)
     // runtime, such as opt, can catch that.
     const DecodeKernel& kernel = kernelNamed("float_deconstruct.bf16.cuda");
     const RunBatch batch{ { 1000 }, { 0 }, 0 };
+    ScratchSize size;
+    ASSERT_FALSE(
+            ZL_isError(kernel.scratchSize({ &batch.runs[0].info, 1 }, size)));
+    const DevicePtr<std::byte> scratch_d = deviceAlloc<std::byte>(size.bytes);
     ASSERT_EQ(cudaSetDevice(-1), cudaErrorInvalidDevice);
 
-    ZL_Report const result = kernel.decode(batch.runs, nullptr);
+    ZL_Report const result =
+            kernel.decode(batch.runs, scratch_d.get(), size.bytes, nullptr);
 
     EXPECT_FALSE(ZL_isError(result));
     EXPECT_EQ(cudaGetLastError(), cudaErrorInvalidDevice);
