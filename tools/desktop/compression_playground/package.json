@@ -1,0 +1,100 @@
+{
+  "name": "@openzl/compression-playground-desktop",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Desktop app for benchmarking OpenZL compression profiles with the native CLI",
+  "author": "OpenZL contributors",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "setup": "node setup.cjs",
+    "dev": "yarn setup && concurrently -k -s first \"yarn --cwd ../../web/compression_playground vite --base ./\" \"wait-on tcp:5173 && electron electron/main.cjs --dev-server=http://localhost:5173\"",
+    "build:renderer": "yarn --cwd ../../web/compression_playground tsc -b && yarn --cwd ../../web/compression_playground vite build --base ./ --outDir ../../desktop/compression_playground/dist --emptyOutDir",
+    "build:native": "node setup.cjs native",
+    "test:native": "yarn build:native && node electron/tests/native-training-smoke.cjs",
+    "test:security": "yarn build:renderer && electron electron/tests/window-security-smoke.cjs",
+    "test:packaged": "yarn package && node electron/tests/packaged-app-smoke.cjs",
+    "test:cancel": "yarn build:renderer && yarn build:native && node electron/tests/cancellation-smoke.cjs",
+    "build": "yarn setup && yarn build:renderer && electron-builder",
+    "package": "yarn setup && yarn build:renderer && electron-builder --dir",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@electron/fuses": "1.8.0",
+    "@eslint/js": "9.36.0",
+    "@types/node": "24.13.3",
+    "concurrently": "9.2.1",
+    "electron": "38.0.0",
+    "electron-builder": "24.13.3",
+    "eslint": "9.36.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-prettier": "5.5.4",
+    "globals": "16.4.0",
+    "prettier": "3.6.2",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.45.0",
+    "vitest": "4.1.6",
+    "wait-on": "9.0.1"
+  },
+  "resolutions": {
+    "@eslint/plugin-kit": "0.3.5",
+    "brace-expansion": "2.0.2",
+    "js-yaml": "4.1.1",
+    "picomatch": "4.0.4"
+  },
+  "build": {
+    "appId": "org.openzl.compression-playground",
+    "productName": "OpenZL Compression Playground",
+    "files": [
+      "dist/**/*",
+      "electron/*.cjs",
+      "!electron/after-pack.cjs",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "electron/native/build/Release",
+        "to": "native",
+        "filter": [
+          "zli{,.exe}"
+        ]
+      },
+      {
+        "from": "electron/native-worker.cjs",
+        "to": "native/native-worker.cjs"
+      },
+      {
+        "from": "electron/zli-client.cjs",
+        "to": "native/zli-client.cjs"
+      }
+    ],
+    "asar": true,
+    "afterPack": "electron/after-pack.cjs",
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "executableName": "openzl-compression-playground",
+      "target": [
+        "AppImage"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
