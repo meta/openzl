@@ -1,0 +1,55 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+
+load("@fbcode_macros//build_defs:fbcode_configured_alias.bzl", "fbcode_configured_alias")
+load("@fbsource//tools/build_defs:default_platform_defs.bzl", "get_host_target_platform")
+load("../../../defs.bzl", "zs_cxxbinary", "zs_fuzzers", "zs_library", "zs_unittest")
+
+oncall("data_compression")
+
+zs_library(
+    name = "numpy_builder",
+    headers = ["numpy_builder.h"],
+)
+
+zs_unittest(
+    name = "test",
+    srcs = [
+        "numpy_test.cpp",
+    ],
+    deps = [
+        "..:numpy_parser",
+        "../..:custom_parsers",
+        "../../../cpp:openzl_cpp",
+        ":numpy_builder",
+    ],
+)
+
+zs_cxxbinary(
+    name = "numpy_fuzzer_generator",
+    srcs = ["numpy_fuzzer_generator.cpp"],
+    deps = [":numpy_builder"],
+)
+
+fbcode_configured_alias(
+    name = "numpy_fuzzer_generator_host",
+    actual = ":numpy_fuzzer_generator",
+    platform = get_host_target_platform(),
+)
+
+zs_fuzzers(
+    srcs = [
+        "NumPyFuzzer.cpp",
+    ],
+    ftest_names = [
+        ("NumPyTest", "RandomInputFuzzer"),
+        ("NumPyTest", "StructuredInputFuzzer"),
+    ],
+    generator = ":numpy_fuzzer_generator_host",
+    deps = [
+        "..:numpy_parser",
+        "../../../cpp:openzl_cpp",
+        "../../../tests/datagen:datagen",
+        "fbsource//xplat/security/lionhead/utils/lib_ftest:lib",
+        ":numpy_builder",
+    ],
+)
