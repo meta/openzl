@@ -1,0 +1,23 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+
+load("../../defs.bzl", "zs_library")
+
+oncall("data_compression")
+
+zs_library(
+    name = "numpy_parser",
+    srcs = glob(
+        ["*.c"],
+        exclude = ["tests/*"],
+    ),
+    headers = glob(
+        ["*.h"],
+    ),
+    deps = [
+        "..:zip_lexer",
+        "../shared_components:tensor_components",
+    ],
+    exported_deps = [
+        "../..:zstronglib",
+    ],
+)

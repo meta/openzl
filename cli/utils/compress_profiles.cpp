@@ -21,6 +21,7 @@
 #include "custom_parsers/csv/csv_profile.h"
 #include "custom_parsers/dependency_registration.h"
 #include "custom_parsers/gguf/gguf_parser.h"
+#include "custom_parsers/numpy/numpy_parser.h"
 #include "custom_parsers/onnx/onnx_parser.h"
 #include "custom_parsers/parquet/parquet_graph.h"
 #include "custom_parsers/pytorch_model_parser.h"
@@ -470,6 +471,27 @@ compressProfiles()
                         throw InvalidArgsException(
                                 std::string(
                                         "Failed to build the onnx profile: ")
+                                + ZL_Compressor_getErrorContextString_fromError(
+                                        comp, ZL_RES_error(graph)));
+                    }
+                    return ZL_RES_value(graph);
+                },
+                nullptr,
+                true);
+
+        std::string kNumPyName = "numpy";
+        mp[kNumPyName]         = std::make_shared<CompressProfile>(
+                kNumPyName,
+                "NumPy array (.npy) or archive of arrays (.npz). Arrays deflated by np.savez_compressed are not inflated, so they gain nothing.",
+                [](ZL_Compressor* comp, void*, const ProfileArgs& args) {
+                    const auto graph = ZL_NumPy_registerGraph(
+                            comp,
+                            args.chunkSize().value_or(
+                                    ZL_NUMPY_DEFAULT_CHUNK_SIZE));
+                    if (ZL_RES_isError(graph)) {
+                        throw InvalidArgsException(
+                                std::string(
+                                        "Failed to build the numpy profile: ")
                                 + ZL_Compressor_getErrorContextString_fromError(
                                         comp, ZL_RES_error(graph)));
                     }
