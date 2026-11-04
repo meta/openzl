@@ -228,8 +228,7 @@ export default function ResultsPanel({runState}: ResultsPanelProps) {
                     </Text>
                     These charts compare compression ratio against speed. The left chart shows compression speed, the
                     right shows decompression speed. Points toward the top-right perform best. Hover over a point to see
-                    details, or click a row in the benchmarking table to explore its compression graph through the
-                    visualization tool.
+                    details.
                   </Text>
                 </Box>
                 <Box as="li" display="flex" alignItems="flex-start" gap="12px">
