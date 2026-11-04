@@ -172,6 +172,20 @@ const std::vector<size_t> kUnevenSizes = { 50000, 1, 200000, 12345, 7 };
 // A single range whose size is not a multiple of the vector width, with a small
 // slice size that forces many slices plus a ragged tail: exercises both the
 // vectorized body and the scalar tail.
+TEST(DecodeBf16Test, SizesScratchForASliceLimitNearSizeMax)
+{
+    // A caller can pass a slice limit near SIZE_MAX to mean "no limit". This
+    // fails if the slice count wraps to 0, so the reported scratch is smaller
+    // than the decode needs.
+    const size_t nbElts = 8;
+    const size_t hugeSliceLimit =
+            SIZE_MAX - 3; // a multiple of the vector width
+    EXPECT_EQ(openzl::gpu::sliceCount(nbElts, hugeSliceLimit), 1);
+    EXPECT_EQ(
+            bf16DeconDecodeScratchBytes(&nbElts, 1, hugeSliceLimit),
+            sizeof(Bf16DeconElementRange));
+}
+
 TEST(DecodeBf16Test, SingleRangeMatchesOpenZLDecoder)
 {
     const Bf16Frames frames({ 100002 }, 3);

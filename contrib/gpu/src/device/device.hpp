@@ -68,9 +68,10 @@ class Stream {
      * waiting for the device.
      *
      * @p kernel comes from this device's @c chooseDecodeBatches, and @p runs
-     * are the runs of that batch with addresses. Host memory that @p runs
-     * references may be reused when this returns. Device buffers must stay
-     * valid until the work on this stream completes.
+     * are the runs of that batch with addresses. @p scratch_d holds
+     * @p scratchBytes bytes, as @c DecodeKernel::decode describes. Host memory
+     * that @p runs references may be reused when this returns. Device buffers
+     * must stay valid until the work on this stream completes.
      *
      * @returns Success, or a kernel's error, after which earlier work may still
      * be running, so the caller must synchronize this stream before freeing its
@@ -79,7 +80,9 @@ class Stream {
      */
     ZL_Report decodeBatch(
             const DecodeKernel& kernel,
-            poly::span<const BoundCodecRun> runs) const;
+            poly::span<const BoundCodecRun> runs,
+            void* scratch_d,
+            size_t scratchBytes) const;
 
     /**
      * Allocates @p size bytes of device memory in the order of this stream.
@@ -248,6 +251,8 @@ class Device {
     virtual ZL_Report doDecodeBatch(
             const DecodeKernel& kernel,
             poly::span<const BoundCodecRun> runs,
+            void* scratch_d,
+            size_t scratchBytes,
             void* native);
 
    private:

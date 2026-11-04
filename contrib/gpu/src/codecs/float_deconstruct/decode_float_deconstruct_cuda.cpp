@@ -24,6 +24,27 @@ bool acceptsRun(const CodecRunInfo& run)
     return isBf16CodecRun(run);
 }
 
+ZL_Report scratchSizeOfRuns(
+        poly::span<const CodecRunInfo> runs,
+        ScratchSize& size)
+{
+    ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
+    ZL_ERR_IF_GT(runs.size(), std::numeric_limits<uint32_t>::max(), allocation);
+    std::vector<size_t> numElts;
+    numElts.reserve(runs.size());
+    for (const CodecRunInfo& run : runs) {
+        numElts.push_back(run.inputs[1].shape.numElts);
+    }
+    size = {
+        .bytes = bf16DeconDecodeScratchBytes(
+                numElts.data(),
+                static_cast<uint32_t>(numElts.size()),
+                kBf16DefaultMaxSliceElts),
+        .alignment = alignof(Bf16DeconElementRange),
+    };
+    return ZL_returnSuccess();
+}
+
 /**
  * The host descriptors of @p runs, or no value if a run has an address
  * that the kernel cannot use.
@@ -67,7 +88,11 @@ ZL_Report reportLaunch(const char* kernel, Launch&& launch)
     return ZL_returnSuccess();
 }
 
-ZL_Report decodeRuns(poly::span<const BoundCodecRun> runs, void* stream)
+ZL_Report decodeRuns(
+        poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
+        void* stream)
 {
     ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
     ZL_ERR_IF_GT(runs.size(), std::numeric_limits<uint32_t>::max(), allocation);
@@ -86,6 +111,8 @@ ZL_Report decodeRuns(poly::span<const BoundCodecRun> runs, void* stream)
                 ranges->data(),
                 static_cast<uint32_t>(ranges->size()),
                 kBf16DefaultMaxSliceElts,
+                scratch_d,
+                scratchBytes,
                 static_cast<cudaStream_t>(stream));
     });
 }
@@ -95,7 +122,10 @@ ZL_Report decodeRuns(poly::span<const BoundCodecRun> runs, void* stream)
 poly::span<const DecodeKernel> floatDeconstructCudaKernels()
 {
     static constexpr DecodeKernel kKernels[] = {
-        { "float_deconstruct.bf16.cuda", acceptsRun, decodeRuns },
+        { "float_deconstruct.bf16.cuda",
+          acceptsRun,
+          scratchSizeOfRuns,
+          decodeRuns },
     };
     return kKernels;
 }

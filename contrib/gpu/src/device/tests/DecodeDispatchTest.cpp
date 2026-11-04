@@ -22,12 +22,15 @@ constexpr ZL_IDType kUnknownTransform   = 3;
 struct Enqueued {
     std::string kernel;
     std::vector<uint32_t> runIds;
-    void* stream = nullptr;
+    void* scratch_d     = nullptr;
+    size_t scratchBytes = 0;
+    void* stream        = nullptr;
 
     bool operator==(const Enqueued& other) const
     {
         return kernel == other.kernel && runIds == other.runIds
-                && stream == other.stream;
+                && scratch_d == other.scratch_d
+                && scratchBytes == other.scratchBytes && stream == other.stream;
     }
 };
 
@@ -37,10 +40,14 @@ std::vector<Enqueued>& enqueued()
     return calls;
 }
 
-ZL_Report
-record(const char* kernel, poly::span<const BoundCodecRun> runs, void* stream)
+ZL_Report record(
+        const char* kernel,
+        poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
+        void* stream)
 {
-    Enqueued call{ kernel, {}, stream };
+    Enqueued call{ kernel, {}, scratch_d, scratchBytes, stream };
     for (const BoundCodecRun& run : runs) {
         call.runIds.push_back(run.info.frameFormatVersion);
     }
@@ -58,32 +65,52 @@ bool acceptsUnmarked(const CodecRunInfo& run)
     return run.codecHeader_h.empty();
 }
 
-ZL_Report decodeAsFast(poly::span<const BoundCodecRun> runs, void* stream)
+ZL_Report noScratch(poly::span<const CodecRunInfo>, ScratchSize& size)
 {
-    return record("fast", runs, stream);
+    size = {};
+    return ZL_returnSuccess();
 }
 
-ZL_Report decodeAsFallback(poly::span<const BoundCodecRun> runs, void* stream)
+ZL_Report decodeAsFast(
+        poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
+        void* stream)
 {
-    return record("fallback", runs, stream);
+    return record("fast", runs, scratch_d, scratchBytes, stream);
 }
 
-ZL_Report fail(poly::span<const BoundCodecRun>, void*)
+ZL_Report decodeAsFallback(
+        poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
+        void* stream)
+{
+    return record("fallback", runs, scratch_d, scratchBytes, stream);
+}
+
+ZL_Report fail(poly::span<const BoundCodecRun>, void*, size_t, void*)
 {
     ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
     ZL_ERR(transform_executionFailure, "injected failure");
 }
 
-ZL_Report limit(poly::span<const BoundCodecRun>, void*)
+ZL_Report limit(poly::span<const BoundCodecRun>, void*, size_t, void*)
 {
     ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
     ZL_ERR(temporaryLibraryLimitation, "injected limitation");
 }
 
-constexpr DecodeKernel kFast{ "fast", acceptsUnmarked, decodeAsFast };
-constexpr DecodeKernel kFallback{ "fallback", acceptsAll, decodeAsFallback };
-constexpr DecodeKernel kFailing{ "failing", acceptsAll, fail };
-constexpr DecodeKernel kLimited{ "limited", acceptsAll, limit };
+constexpr DecodeKernel kFast{ "fast",
+                              acceptsUnmarked,
+                              noScratch,
+                              decodeAsFast };
+constexpr DecodeKernel kFallback{ "fallback",
+                                  acceptsAll,
+                                  noScratch,
+                                  decodeAsFallback };
+constexpr DecodeKernel kFailing{ "failing", acceptsAll, noScratch, fail };
+constexpr DecodeKernel kLimited{ "limited", acceptsAll, noScratch, limit };
 
 const DecodeKernelTable& testTable()
 {
@@ -211,19 +238,21 @@ TEST_F(DecodeDispatchTest, RejectsARunThatNoKernelAccepts)
     EXPECT_TRUE(batches.empty());
 }
 
-TEST_F(DecodeDispatchTest, PassesTheStreamToTheKernel)
+TEST_F(DecodeDispatchTest, PassesTheScratchAndTheStreamToTheKernel)
 {
-    // This fails if the kernel receives a stream other than the caller's.
-    int marker = 0;
+    // This fails if the kernel receives a scratch or a stream other than the
+    // caller's.
+    int marker[2]{};
     std::vector<BoundCodecRun> runs(2);
     runs[0].info.frameFormatVersion = 0;
     runs[1].info.frameFormatVersion = 1;
 
-    ZL_Report const result = decodeBatchWith(kFast, runs, &marker);
+    ZL_Report const result =
+            decodeBatchWith(kFast, runs, &marker[0], 64, &marker[1]);
 
     ASSERT_FALSE(ZL_isError(result));
     const std::vector<Enqueued> expected{
-        { "fast", { 0, 1 }, &marker },
+        { "fast", { 0, 1 }, &marker[0], 64, &marker[1] },
     };
     EXPECT_EQ(enqueued(), expected);
 }
@@ -233,7 +262,8 @@ TEST_F(DecodeDispatchTest, ForwardsAKernelError)
     // This fails if a kernel's error is replaced.
     const std::vector<BoundCodecRun> runs(1);
 
-    ZL_Report const result = decodeBatchWith(kFailing, runs, nullptr);
+    ZL_Report const result =
+            decodeBatchWith(kFailing, runs, nullptr, 0, nullptr);
 
     EXPECT_EQ(ZL_errorCode(result), ZL_ErrorCode_transform_executionFailure);
 }
@@ -245,7 +275,8 @@ TEST_F(DecodeDispatchTest, ReportsALateLimitationAsAFailure)
     // work.
     const std::vector<BoundCodecRun> runs(1);
 
-    ZL_Report const result = decodeBatchWith(kLimited, runs, nullptr);
+    ZL_Report const result =
+            decodeBatchWith(kLimited, runs, nullptr, 0, nullptr);
 
     EXPECT_EQ(ZL_errorCode(result), ZL_ErrorCode_transform_executionFailure);
 }
@@ -253,8 +284,8 @@ TEST_F(DecodeDispatchTest, ReportsALateLimitationAsAFailure)
 TEST_F(DecodeDispatchTest, EnqueuesNothingForAnEmptyBatch)
 {
     // This fails if an empty batch reaches a kernel.
-    ZL_Report const result =
-            decodeBatchWith(kFast, poly::span<const BoundCodecRun>{}, nullptr);
+    ZL_Report const result = decodeBatchWith(
+            kFast, poly::span<const BoundCodecRun>{}, nullptr, 0, nullptr);
 
     ASSERT_FALSE(ZL_isError(result));
     EXPECT_TRUE(enqueued().empty());

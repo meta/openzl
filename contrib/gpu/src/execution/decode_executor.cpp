@@ -55,6 +55,7 @@ Result<PlannedDecode> planExecution(
             buildDecodeStorageRequirements(decode.plan);
     ZL_ERR_IF_ERR(requirements.report());
     decode.requirements = std::move(requirements).value();
+    addScratchRequirements(decode.batches, decode.requirements);
 
     Result<AllocationLayout> layout =
             buildMonotonicAllocationLayout(decode.requirements);
@@ -73,7 +74,8 @@ ZL_Report enqueueBatch(const Stream& stream, const BoundBatch& batch)
     if (batch.kernel == nullptr) {
         ZL_ERR(logicError, "A planned batch has no kernel");
     }
-    return stream.decodeBatch(*batch.kernel, batch.runs);
+    return stream.decodeBatch(
+            *batch.kernel, batch.runs, batch.scratch_d, batch.scratchBytes);
 }
 
 /**

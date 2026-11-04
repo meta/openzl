@@ -36,6 +36,10 @@ std::vector<std::string>& recordedEvents()
 /// What the recording kernel answers.
 struct RecordingAnswers {
     bool accepts = true;
+    /// The scratch that it reports for each batch.
+    ScratchSize scratch;
+    /// The scratch address that each decoded batch received, in order.
+    std::vector<void*> scratch_d;
     /// Whether the "small" kernel fails.
     bool failSmall = false;
     /// Whether the "small" kernel throws std::bad_alloc.
@@ -71,23 +75,42 @@ bool acceptsRecorded(const CodecRunInfo&)
     return recordingAnswers().accepts;
 }
 
+ZL_Report scratchOfRecorded(
+        poly::span<const CodecRunInfo> runs,
+        ScratchSize& size)
+{
+    recordedEvents().push_back("scratch " + std::to_string(runs.size()));
+    size = recordingAnswers().scratch;
+    return ZL_returnSuccess();
+}
+
 ZL_Report record(
         const char* eventPrefix,
         poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
         void* stream)
 {
+    recordingAnswers().scratch_d.push_back(scratch_d);
     std::string event = eventPrefix;
     for (const BoundCodecRun& run : runs) {
         event += " " + std::to_string(run.info.transform.trid);
+    }
+    if (scratchBytes != 0) {
+        event += scratch_d == nullptr ? " with null scratch" : " with scratch";
     }
     event += streamName(stream);
     recordedEvents().push_back(std::move(event));
     return ZL_returnSuccess();
 }
 
-ZL_Report decodeRecorded(poly::span<const BoundCodecRun> runs, void* stream)
+ZL_Report decodeRecorded(
+        poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
+        void* stream)
 {
-    return record("decode", runs, stream);
+    return record("decode", runs, scratch_d, scratchBytes, stream);
 }
 
 /// Accepts runs whose first output has fewer than 15000 elements.
@@ -96,7 +119,11 @@ bool acceptsSmall(const CodecRunInfo& run)
     return run.outputs.size() == 1 && run.outputs[0].shape.numElts < 15000;
 }
 
-ZL_Report decodeSmall(poly::span<const BoundCodecRun> runs, void* stream)
+ZL_Report decodeSmall(
+        poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
+        void* stream)
 {
     ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
     if (recordingAnswers().throwSmall) {
@@ -106,11 +133,17 @@ ZL_Report decodeSmall(poly::span<const BoundCodecRun> runs, void* stream)
             recordingAnswers().failSmall,
             transform_executionFailure,
             "injected failure");
-    return record("decode small", runs, stream);
+    return record("decode small", runs, scratch_d, scratchBytes, stream);
 }
 
-constexpr DecodeKernel kRecorded{ "recorded", acceptsRecorded, decodeRecorded };
-constexpr DecodeKernel kSmall{ "small", acceptsSmall, decodeSmall };
+constexpr DecodeKernel kRecorded{ "recorded",
+                                  acceptsRecorded,
+                                  scratchOfRecorded,
+                                  decodeRecorded };
+constexpr DecodeKernel kSmall{ "small",
+                               acceptsSmall,
+                               scratchOfRecorded,
+                               decodeSmall };
 
 /// The recording kernel for every codec of the float frame below, except
 /// @p missing.
@@ -255,7 +288,8 @@ TEST(DecodeExecutorTest, ChoosesEveryKernelWhilePlanning)
 {
     // Each chunk decodes its exponents with the constant codec, then
     // float_deconstruct, so each wave is one batch of two runs. This fails if
-    // planning groups the runs differently, or touches the device.
+    // planning does not size each batch's scratch, or touches the device's
+    // memory.
     std::vector<float> values;
     const StagedHostFrame frame{ makeConstantExponentFloatFrame(values) };
     RecordingDevice device;
@@ -266,7 +300,8 @@ TEST(DecodeExecutorTest, ChoosesEveryKernelWhilePlanning)
     ASSERT_EQ(decode.batches.size(), 2);
     EXPECT_EQ(decode.batches[0].codecRuns.size(), 2);
     EXPECT_EQ(decode.batches[1].codecRuns.size(), 2);
-    EXPECT_TRUE(device.events.empty());
+    const std::vector<std::string> expected{ "scratch 2", "scratch 2" };
+    EXPECT_EQ(device.events, expected);
 }
 
 TEST(DecodeExecutorTest, EnqueuesEachBatchInWaveOrder)
@@ -335,16 +370,52 @@ TEST(DecodeExecutorTest, AllocatesAndFreesEveryWorkspaceArena)
     EXPECT_EQ(count("deallocate"), 2);
 }
 
-TEST(DecodeExecutorTest, GivesEachVariantOfACodecItsOwnBatch)
+TEST(DecodeExecutorTest, GivesEachBatchItsScratch)
+{
+    // This fails if the layout leaves out a batch's scratch, or the batch's
+    // decode does not receive an address for it.
+    std::vector<float> values;
+    const StagedHostFrame frame{ makeConstantExponentFloatFrame(values) };
+    RecordingDevice device;
+    recordingAnswers().scratch = { .bytes = 1000, .alignment = 512 };
+    const PlannedDecode decode =
+            valueOf(planDecodeExecution(device, frame.views()));
+    std::vector<std::byte> dst(values.size() * sizeof(float));
+    device.events.clear();
+
+    ZL_Report const result = enqueueDecode(
+            device.defaultStream(),
+            decode,
+            frame.views(),
+            dst.data(),
+            dst.size());
+
+    ASSERT_FALSE(ZL_isError(result));
+    const std::string constant =
+            std::to_string(ZL_StandardTransformID_constant_serial);
+    const std::string floatDeconstruct =
+            std::to_string(ZL_StandardTransformID_float_deconstruct);
+    const std::vector<std::string> expected{
+        "allocate",
+        "decode " + constant + " " + constant + " with scratch",
+        "decode " + floatDeconstruct + " " + floatDeconstruct + " with scratch",
+        "copy 0",
+        "deallocate",
+    };
+    EXPECT_EQ(device.events, expected);
+}
+
+TEST(DecodeExecutorTest, GivesEachVariantOfACodecItsOwnBatchAndScratch)
 {
     // A codec's variants can need different kernels. The two constant runs
     // differ only in size, so a size rule stands in for a variant in the codec
-    // header. This fails if the variants share a batch, if the batches of the
-    // wave do not get branches of their own, or if the next wave starts before
-    // the join.
+    // header. This fails if the variants share a batch or a scratch region, if
+    // the batches of the wave do not get branches of their own, or if the next
+    // wave starts before the join.
     std::vector<float> values;
     const StagedHostFrame frame{ makeConstantExponentFloatFrame(values) };
     RecordingDevice device{ variantTable() };
+    recordingAnswers().scratch = { .bytes = 1000, .alignment = 512 };
     const PlannedDecode decode =
             valueOf(planDecodeExecution(device, frame.views()));
     std::vector<std::byte> dst(values.size() * sizeof(float));
@@ -365,14 +436,16 @@ TEST(DecodeExecutorTest, GivesEachVariantOfACodecItsOwnBatch)
     const std::vector<std::string> expected{
         "allocate",
         "fork 2",
-        "decode small " + constant + " on branch 0",
-        "decode " + constant + " on branch 1",
+        "decode small " + constant + " with scratch on branch 0",
+        "decode " + constant + " with scratch on branch 1",
         "join 2",
-        "decode " + floatDeconstruct + " " + floatDeconstruct,
+        "decode " + floatDeconstruct + " " + floatDeconstruct + " with scratch",
         "copy 0",
         "deallocate",
     };
     EXPECT_EQ(device.events, expected);
+    ASSERT_EQ(recordingAnswers().scratch_d.size(), 3);
+    EXPECT_NE(recordingAnswers().scratch_d[0], recordingAnswers().scratch_d[1]);
 }
 
 TEST(DecodeExecutorTest, JoinsTheBranchesWhenABatchThrows)
@@ -439,7 +512,7 @@ TEST(DecodeExecutorTest, JoinsTheBranchesWhenABatchFails)
 TEST(DecodeExecutorTest, PlanningRejectsARunThatNoKernelAccepts)
 {
     // A caller falls back to the CPU on this error, before it allocates. This
-    // fails if planning succeeds, or touches the device.
+    // fails if planning succeeds, or sizes scratch for a rejected run.
     std::vector<float> values;
     const StagedHostFrame frame{ makeConstantExponentFloatFrame(values) };
     RecordingDevice device;

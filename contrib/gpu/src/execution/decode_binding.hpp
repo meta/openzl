@@ -52,19 +52,23 @@ Result<DecodeInfo> buildDecodeInfo(
         const DecodePlan& plan,
         poly::span<const PreparedGpuChunkView> chunks);
 
-/** Codec runs of one wave that one kernel decodes together. */
+/**
+ * Codec runs of one wave that one kernel decodes together, and the scratch that
+ * they need.
+ */
 struct PlannedDecodeBatch {
     /// Index of the batch's wave in @c WorkSchedule::waves.
     size_t wave = 0;
     /// Kernel in the device's table. It lives as long as the device.
     const DecodeKernel* kernel = nullptr;
-    /// The batch's codec runs, in the order of the wave's work groups.
+    /// The batch's codec runs, in their order in the wave.
     std::vector<PlannedCodecRunIndex> codecRuns;
+    ScratchSize scratch;
 };
 
 /**
  * Binding, part 1: chooses a kernel for every codec run that a wave of
- * @p schedule runs.
+ * @p schedule runs, and sizes the scratch of each batch.
  *
  * Within each wave, runs that choose the same kernel form one batch, as
  * @c Device::chooseDecodeBatches groups them. Allocates no device memory, so a
@@ -73,12 +77,29 @@ struct PlannedDecodeBatch {
  * @param info Info from @c buildDecodeInfo, for the plan that @p schedule
  * schedules.
  * @returns The batches in wave order; @c temporaryLibraryLimitation if no
- * kernel accepts a run; or @c allocation if an allocation fails.
+ * kernel accepts a run; a kernel's @c scratchSize error; or @c allocation if an
+ * allocation fails.
  */
 Result<std::vector<PlannedDecodeBatch>> planDecodeBatches(
         const Device& device,
         const WorkSchedule& schedule,
         const DecodeInfo& info);
+
+/**
+ * Adds one @c StorageContent::BatchScratch requirement to @p requirements for
+ * each batch that needs scratch, in the workspace arena, and records its index
+ * in @c ExecutionRequirements::batchScratch.
+ *
+ * The runs of a batch use its scratch at the same time, and the dependency
+ * graph orders none of them before another, so no interval of codec-run
+ * stages covers them. The scratch therefore lives for the whole decode, as
+ * storage shared by independent uses does.
+ *
+ * @throws std::bad_alloc if an allocation fails.
+ */
+void addScratchRequirements(
+        poly::span<const PlannedDecodeBatch> batches,
+        ExecutionRequirements& requirements);
 
 /** One batch with addresses: everything that @c Stream::decodeBatch takes. */
 struct BoundBatch {
@@ -86,6 +107,10 @@ struct BoundBatch {
     const DecodeKernel* kernel = nullptr;
     /// The batch's runs with addresses, in the batch's order.
     poly::span<const BoundCodecRun> runs;
+    /// The batch's scratch, or null if the batch needs none.
+    std::byte* scratch_d = nullptr;
+    /// Bytes at @c scratch_d.
+    size_t scratchBytes = 0;
 };
 
 /**
@@ -122,17 +147,17 @@ struct BoundDecode {
 };
 
 /**
- * Binding, part 2: gives every stream of @p plan, and every run of @p batches,
- * its device address.
+ * Binding, part 2: gives every stream of @p plan, and every run and scratch of
+ * @p batches, its device address.
  *
  * A @c Stored stream uses its address in the frame. A @c Destination or
- * @c StreamArena stream uses the base address of its arena plus its offset in
- * the layout. A @c StreamRef uses its backing stream's address plus its
- * offset.
+ * @c StreamArena stream, and a batch's scratch, use the base address of their
+ * arena plus their offset in the layout. A @c StreamRef uses its backing
+ * stream's address plus its offset.
  *
  * @param plan Decode graph from @c planDecode.
  * @param requirements Requirements from @c buildDecodeStorageRequirements of
- * @p plan.
+ * @p plan, with @c addScratchRequirements of @p batches.
  * @param arenas The layout of @p requirements, with an address for each
  * arena.
  * @param chunks The chunks that @c planDecode received. Their contexts and

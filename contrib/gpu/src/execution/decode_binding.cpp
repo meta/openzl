@@ -11,6 +11,7 @@
 
 #include "openzl/common/errors_internal.h"
 #include "openzl/decompress/dctx2.h"
+#include "openzl/shared/utils.h"
 #include "openzl/zl_data.h"
 
 namespace openzl::gpu {
@@ -118,6 +119,7 @@ Result<std::vector<PlannedDecodeBatch>> planBatches(
     std::vector<PlannedDecodeBatch> planned;
     std::vector<PlannedCodecRunIndex> waveRuns;
     std::vector<CodecRunInfo> waveInfo;
+    std::vector<CodecRunInfo> batchInfo;
     for (size_t w = 0; w < schedule.waves.size(); ++w) {
         waveRuns.clear();
         waveInfo.clear();
@@ -129,11 +131,26 @@ Result<std::vector<PlannedDecodeBatch>> planBatches(
         std::vector<DecodeBatch> chosen;
         ZL_ERR_IF_ERR(device.chooseDecodeBatches(waveInfo, chosen));
         for (const DecodeBatch& batch : chosen) {
-            PlannedDecodeBatch plannedBatch{ .wave   = w,
-                                             .kernel = batch.kernel };
+            // NULLSAFECLANG does not see the check in ZL_ERR_IF_NULL, because
+            // that macro compares copies of its operands.
+            if (batch.kernel == nullptr) {
+                ZL_ERR(logicError, "The device chose a batch without a kernel");
+            }
+            const DecodeKernel& kernel = *batch.kernel;
+            PlannedDecodeBatch plannedBatch{ .wave = w, .kernel = &kernel };
+            batchInfo.clear();
             for (const size_t i : batch.runs) {
                 plannedBatch.codecRuns.push_back(waveRuns.at(i));
+                batchInfo.push_back(waveInfo.at(i));
             }
+            ZL_ERR_IF_ERR(kernel.scratchSize(batchInfo, plannedBatch.scratch));
+            ZL_ERR_IF(
+                    plannedBatch.scratch.alignment == 0
+                            || !ZL_isPow2(plannedBatch.scratch.alignment),
+                    logicError,
+                    "%s reported a scratch alignment that is not a power of "
+                    "two",
+                    kernel.name);
             planned.push_back(std::move(plannedBatch));
         }
     }
@@ -228,8 +245,8 @@ class Binder {
     }
 
     /**
-     * Builds one @c BoundBatch for each batch: its kernel, and its runs, in the
-     * batch's order, with the addresses of their streams.
+     * Builds one @c BoundBatch for each batch: its runs, in the batch's order,
+     * with the addresses of their streams, and its scratch address.
      */
     void bindBatches()
     {
@@ -243,11 +260,14 @@ class Binder {
         bound_.outputs.reserve(bound_.info.outputs.size());
         bound_.codecRuns.reserve(numRuns);
         bound_.batches.reserve(batches_.size());
-        for (const PlannedDecodeBatch& batch : batches_) {
-            const size_t firstRun = bound_.codecRuns.size();
+        for (size_t b = 0; b < batches_.size(); ++b) {
+            const PlannedDecodeBatch& batch = batches_[b];
+            const size_t firstRun           = bound_.codecRuns.size();
             for (const PlannedCodecRunIndex r : batch.codecRuns) {
                 bindCodecRun(r);
             }
+            const std::optional<size_t> scratch =
+                    requirements_.batchScratch.at(b);
             bound_.batches.push_back(
                     {
                             .kernel = batch.kernel,
@@ -257,6 +277,10 @@ class Binder {
                                             .subspan(
                                                     firstRun,
                                                     batch.codecRuns.size()),
+                            .scratch_d    = scratch.has_value()
+                                       ? arenas_.addressOf(*scratch)
+                                       : nullptr,
+                            .scratchBytes = batch.scratch.bytes,
                     });
         }
     }
@@ -353,6 +377,31 @@ Result<std::vector<PlannedDecodeBatch>> planDecodeBatches(
         return planBatches(device, schedule, info);
     } catch (const std::bad_alloc&) {
         ZL_ERR(allocation);
+    }
+}
+
+void addScratchRequirements(
+        poly::span<const PlannedDecodeBatch> batches,
+        ExecutionRequirements& requirements)
+{
+    requirements.batchScratch.assign(batches.size(), std::nullopt);
+    for (size_t i = 0; i < batches.size(); ++i) {
+        const ScratchSize& scratch = batches[i].scratch;
+        if (scratch.bytes == 0) {
+            continue;
+        }
+        requirements.batchScratch.at(i) = requirements.requirements.size();
+        requirements.requirements.push_back(
+                {
+                        .content   = StorageContent::BatchScratch,
+                        .arena     = ArenaClass::StreamArena,
+                        .lifetime  = { .firstUse = DecodeExecutionStage::
+                                               decodeStart(),
+                                       .lastUse = DecodeExecutionStage::
+                                               decodeEnd() },
+                        .size      = scratch.bytes,
+                        .alignment = scratch.alignment,
+                });
     }
 }
 

@@ -26,6 +26,14 @@
 
 namespace openzl::gpu {
 
+// Number of slices of at most maxSliceElts that a range of nbElts splits into.
+// nbElts + maxSliceElts can wrap for a maxSliceElts near SIZE_MAX, which a
+// caller can pass to mean "no limit", so the division rounds up without it.
+inline size_t sliceCount(size_t nbElts, size_t maxSliceElts)
+{
+    return nbElts / maxSliceElts + (nbElts % maxSliceElts != 0 ? 1 : 0);
+}
+
 // Splits each range into slices of at most maxSliceElts.
 template <typename Range>
 std::vector<Range>
@@ -33,8 +41,7 @@ splitIntoSlices(const Range* ranges_h, uint32_t numRanges, size_t maxSliceElts)
 {
     size_t numSlices = 0;
     for (uint32_t c = 0; c < numRanges; ++c) {
-        const size_t nb = ranges_h[c].nbElts;
-        numSlices += (nb + maxSliceElts - 1) / maxSliceElts;
+        numSlices += sliceCount(ranges_h[c].nbElts, maxSliceElts);
     }
     if (numSlices > std::numeric_limits<uint32_t>::max()) {
         throw std::runtime_error(

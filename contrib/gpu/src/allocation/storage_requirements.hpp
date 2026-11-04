@@ -16,8 +16,18 @@ namespace openzl::gpu {
 enum class ArenaClass : uint32_t {
     /// Caller-provided storage receiving the decoded output.
     Destination,
-    /// Workspace holding materialized intermediate streams.
+    /// Workspace holding materialized intermediate streams and the kernel
+    /// scratch of each batch.
     StreamArena,
+};
+
+/// What a storage requirement holds.
+enum class StorageContent : uint32_t {
+    /// One region of a planned stream, named by @c StorageRequirement::region.
+    Stream,
+    /// The kernel scratch of one decode batch. It belongs to no stream, and no
+    /// stream aliases it.
+    BatchScratch,
 };
 
 /// Addressable region of a stream covered by a storage requirement.
@@ -88,9 +98,10 @@ struct StorageLifetime {
 };
 
 /**
- * One stream region that needs storage, described independently of its stream
- * and its final address. @c ExecutionRequirements::streamRequirements finds the
- * requirements of each stream.
+ * One stream region, or one batch's kernel scratch, that needs storage,
+ * described independently of its owner and its final address.
+ * @c ExecutionRequirements::streamRequirements and
+ * @c ExecutionRequirements::batchScratch find the requirements of each owner.
  *
  * A workspace region may be placed anywhere in its arena. A destination region
  * follows the core output layout instead: each final output has its own
@@ -100,7 +111,10 @@ struct StorageLifetime {
  * after another in list order.
  */
 struct StorageRequirement {
-    /// Addressable region of the stream.
+    /// What the region holds.
+    StorageContent content{ StorageContent::Stream };
+    /// Addressable region of the stream. Unused for
+    /// @c StorageContent::BatchScratch.
     StreamRegion region{};
     /// Arena in which the region must be placed.
     ArenaClass arena{};
@@ -125,6 +139,14 @@ struct StorageRequirement {
      * every alias that reads the region.
      */
     size_t alignment{ 1 };
+
+    bool operator==(const StorageRequirement& other) const
+    {
+        return content == other.content && region == other.region
+                && arena == other.arena && finalOutput == other.finalOutput
+                && lifetime == other.lifetime && size == other.size
+                && alignment == other.alignment;
+    }
 };
 
 /**
@@ -155,12 +177,15 @@ struct ExecutionRequirements {
     /**
      * Requirements in deterministic order: destination regions ordered by final
      * output and then by chunk, followed by workspace regions in planned stream
-     * order.
+     * order, followed by scratch in batch order.
      */
     std::vector<StorageRequirement> requirements;
     /// The requirements that place each stream's regions, indexed by
     /// @c PlannedStreamIndex.
     std::vector<StreamRequirements> streamRequirements;
+    /// The requirement that places each batch's kernel scratch, indexed by
+    /// batch. Empty for a batch that needs no scratch.
+    std::vector<std::optional<size_t>> batchScratch;
 };
 
 /**

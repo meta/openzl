@@ -68,13 +68,16 @@ ZL_Report chooseDecodeBatches(
 ZL_Report decodeBatchWith(
         const DecodeKernel& kernel,
         poly::span<const BoundCodecRun> runs,
+        void* scratch_d,
+        size_t scratchBytes,
         void* stream)
 {
     ZL_RESULT_DECLARE_SCOPE_REPORT(nullptr);
     if (runs.empty()) {
         return ZL_returnSuccess();
     }
-    ZL_Report const result = kernel.decode(runs, stream);
+    ZL_Report const result =
+            kernel.decode(runs, scratch_d, scratchBytes, stream);
     // The caller reads temporaryLibraryLimitation as "nothing enqueued",
     // which stops being true once a kernel runs.
     ZL_ERR_IF(
