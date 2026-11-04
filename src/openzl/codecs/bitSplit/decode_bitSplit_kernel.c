@@ -181,62 +181,75 @@ static inline bool isFp64Pattern(
     return true;
 }
 
-static inline void decodeElements(
+/*
+ * Generic decoder: rebuilds the elements one field at a time, over blocks small
+ * enough to stay in L1 cache, so that each loop has fixed widths and
+ * vectorizes.
+ */
+#define BITSPLIT_DECODE_BLOCK_ELTS 2048
+
+#define BITSPLIT_DECODE_FIELD(DstType, SrcType)                                \
+    do {                                                                       \
+        DstType* restrict const out      = (DstType*)dst + start;              \
+        const SrcType* restrict const in = (const SrcType*)srcPtrs[i] + start; \
+        if (i == 0) {                                                          \
+            for (size_t e = 0; e < blockElts; e++)                             \
+                out[e] = (DstType)in[e];                                       \
+        } else {                                                               \
+            for (size_t e = 0; e < blockElts; e++)                             \
+                out[e] |= (DstType)((DstType)in[e] << bitPos);                 \
+        }                                                                      \
+    } while (0)
+
+#define BITSPLIT_DECODE_FIELD_INTO(DstType)           \
+    switch (srcEltWidths[i]) {                        \
+        case 1:                                       \
+            BITSPLIT_DECODE_FIELD(DstType, uint8_t);  \
+            break;                                    \
+        case 2:                                       \
+            BITSPLIT_DECODE_FIELD(DstType, uint16_t); \
+            break;                                    \
+        case 4:                                       \
+            BITSPLIT_DECODE_FIELD(DstType, uint32_t); \
+            break;                                    \
+        case 8:                                       \
+            BITSPLIT_DECODE_FIELD(DstType, uint64_t); \
+            break;                                    \
+        default:                                      \
+            assert(false);                            \
+            break;                                    \
+    }
+
+static void decodeBlock(
         void* dst,
-        const size_t dstEltWidth,
-        size_t nbElts,
+        size_t dstEltWidth,
+        size_t start,
+        size_t blockElts,
         const void* const srcPtrs[],
         const size_t* srcEltWidths,
         const uint8_t* bitWidths,
         size_t nbWidths)
 {
-    for (size_t e = 0; e < nbElts; e++) {
-        uint64_t value = 0;
-        size_t bitPos  = 0;
-
-        for (size_t i = 0; i < nbWidths; i++) {
-            uint64_t part = 0;
-            switch (srcEltWidths[i]) {
-                case 1:
-                    part = ((const uint8_t*)srcPtrs[i])[e];
-                    break;
-                case 2:
-                    part = ((const uint16_t*)srcPtrs[i])[e];
-                    break;
-                case 4:
-                    part = ((const uint32_t*)srcPtrs[i])[e];
-                    break;
-                case 8:
-                    part = ((const uint64_t*)srcPtrs[i])[e];
-                    break;
-                default:
-                    assert(false);
-                    break;
-            }
-
-            value |= (part << bitPos);
-            bitPos += bitWidths[i];
-        }
-
-        // If `dstEltWidth` is a constant and `decodeElements()` is inlined,
-        // we expect the compiler to fold this switch() statement.
+    size_t bitPos = 0;
+    for (size_t i = 0; i < nbWidths; i++) {
         switch (dstEltWidth) {
             case 1:
-                ((uint8_t*)dst)[e] = (uint8_t)value;
+                BITSPLIT_DECODE_FIELD_INTO(uint8_t);
                 break;
             case 2:
-                ((uint16_t*)dst)[e] = (uint16_t)value;
+                BITSPLIT_DECODE_FIELD_INTO(uint16_t);
                 break;
             case 4:
-                ((uint32_t*)dst)[e] = (uint32_t)value;
+                BITSPLIT_DECODE_FIELD_INTO(uint32_t);
                 break;
             case 8:
-                ((uint64_t*)dst)[e] = (uint64_t)value;
+                BITSPLIT_DECODE_FIELD_INTO(uint64_t);
                 break;
             default:
                 assert(false);
                 break;
         }
+        bitPos += bitWidths[i];
     }
 }
 
@@ -295,27 +308,19 @@ void ZL_bitSplitDecode(
     }
 
     /* Generic path */
-    // We expect the compiler to optimize decodeElements() by propagating the
-    // constant (thus resulting in several instances).
-    switch (dstEltWidth) {
-        case 1:
-            decodeElements(
-                    dst, 1, nbElts, srcPtrs, srcEltWidths, bitWidths, nbWidths);
-            break;
-        case 2:
-            decodeElements(
-                    dst, 2, nbElts, srcPtrs, srcEltWidths, bitWidths, nbWidths);
-            break;
-        case 4:
-            decodeElements(
-                    dst, 4, nbElts, srcPtrs, srcEltWidths, bitWidths, nbWidths);
-            break;
-        case 8:
-            decodeElements(
-                    dst, 8, nbElts, srcPtrs, srcEltWidths, bitWidths, nbWidths);
-            break;
-        default:
-            assert(false);
-            break;
+    for (size_t start = 0; start < nbElts;
+         start += BITSPLIT_DECODE_BLOCK_ELTS) {
+        size_t const blockElts = nbElts - start < BITSPLIT_DECODE_BLOCK_ELTS
+                ? nbElts - start
+                : BITSPLIT_DECODE_BLOCK_ELTS;
+        decodeBlock(
+                dst,
+                dstEltWidth,
+                start,
+                blockElts,
+                srcPtrs,
+                srcEltWidths,
+                bitWidths,
+                nbWidths);
     }
 }

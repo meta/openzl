@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <numeric>
+#include <random>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -11,6 +12,7 @@ extern "C" {
 #include "openzl/codecs/bitSplit/decode_bitSplit_kernel.h"
 #include "openzl/codecs/bitSplit/encode_bitSplit_kernel.h"
 }
+#include "openzl/shared/mem.h"
 
 namespace openzl {
 namespace tests {
@@ -96,6 +98,16 @@ TEST_F(BitSplitKernelTest, TopBitsAreZero)
 
     uint16_t val16c = 0xFFFF;
     EXPECT_FALSE(ZL_bitSplit_topBitsAreZero(&val16c, 2, 1, 12));
+}
+
+TEST_F(BitSplitKernelTest, TopBitsAreZeroChecksEveryElement)
+{
+    std::vector<uint32_t> values(5000, 0x00000FFF);
+    EXPECT_TRUE(
+            ZL_bitSplit_topBitsAreZero(values.data(), 4, values.size(), 12));
+    values.back() = 0x00001000;
+    EXPECT_FALSE(
+            ZL_bitSplit_topBitsAreZero(values.data(), 4, values.size(), 12));
 }
 
 TEST_F(BitSplitKernelTest, EncodeDecodeSingleValue_8bit)
@@ -251,6 +263,99 @@ TEST_F(BitSplitKernelTest, EncodeDecodeWideValues)
     uint64_t result;
     ZL_bitSplitDecode(&result, 8, 1, inputs, inputWidths, bitWidths, 4);
     EXPECT_EQ(result, input);
+}
+
+namespace {
+uint64_t readElt(const void* src, size_t eltWidth, size_t e)
+{
+    return ZL_readN((const uint8_t*)src + e * eltWidth, eltWidth);
+}
+
+void writeElt(void* dst, size_t eltWidth, size_t e, uint64_t value)
+{
+    ZL_writeN((uint8_t*)dst + e * eltWidth, value, eltWidth);
+}
+} // namespace
+
+TEST_F(BitSplitKernelTest, EncodeDecodeGenericLayouts)
+{
+    // Layouts outside the specialized float patterns, covering every pair of
+    // element and field widths, at sizes that cross the kernels' blocks.
+    struct Layout {
+        size_t eltWidth;
+        std::vector<uint8_t> bitWidths;
+    };
+    const std::vector<Layout> layouts = {
+        { 1, { 3, 5 } },  { 1, { 5 } },
+        { 2, { 5, 11 } }, { 2, { 8, 8 } },
+        { 2, { 7, 8 } },  { 2, { 16 } },
+        { 4, { 24, 8 } }, { 4, { 23, 8 } },
+        { 4, { 22, 8 } }, { 4, { 1, 15, 16 } },
+        { 4, { 12 } },    { 8, { 56, 8 } },
+        { 8, { 20, 8 } }, { 8, { 1, 9, 17, 33 } },
+        { 8, { 64 } },
+    };
+    std::mt19937_64 rng(42);
+    for (const auto& layout : layouts) {
+        size_t const nbWidths  = layout.bitWidths.size();
+        size_t const sumWidths = std::accumulate(
+                layout.bitWidths.begin(), layout.bitWidths.end(), size_t(0));
+        uint64_t const valueMask =
+                sumWidths == 64 ? ~0ULL : (1ULL << sumWidths) - 1;
+        for (size_t nbElts : { 1, 7, 2048, 5000 }) {
+            std::vector<uint8_t> input(nbElts * layout.eltWidth);
+            for (size_t e = 0; e < nbElts; e++) {
+                writeElt(input.data(), layout.eltWidth, e, rng() & valueMask);
+            }
+
+            std::vector<size_t> fieldWidths(nbWidths);
+            std::vector<std::vector<uint64_t>> fields(nbWidths);
+            std::vector<void*> outputs(nbWidths);
+            for (size_t i = 0; i < nbWidths; i++) {
+                fieldWidths[i] =
+                        ZL_bitSplit_outputEltWidth(layout.bitWidths[i]);
+                fields[i].resize(nbElts);
+                outputs[i] = fields[i].data();
+            }
+            ZL_bitSplitEncode(
+                    outputs.data(),
+                    fieldWidths.data(),
+                    nbElts,
+                    input.data(),
+                    layout.eltWidth,
+                    layout.bitWidths.data(),
+                    nbWidths);
+
+            for (size_t e = 0; e < nbElts; e++) {
+                uint64_t const value =
+                        readElt(input.data(), layout.eltWidth, e);
+                size_t bitPos = 0;
+                for (size_t i = 0; i < nbWidths; i++) {
+                    uint64_t const fieldMask =
+                            ~0ULL >> (64 - layout.bitWidths[i]);
+                    ASSERT_EQ(
+                            readElt(fields[i].data(), fieldWidths[i], e),
+                            (value >> bitPos) & fieldMask)
+                            << "field " << i << " of element " << e
+                            << ", layout of width " << layout.eltWidth;
+                    bitPos += layout.bitWidths[i];
+                }
+            }
+
+            std::vector<const void*> inputs(outputs.begin(), outputs.end());
+            std::vector<uint8_t> decoded(input.size());
+            ZL_bitSplitDecode(
+                    decoded.data(),
+                    layout.eltWidth,
+                    nbElts,
+                    inputs.data(),
+                    fieldWidths.data(),
+                    layout.bitWidths.data(),
+                    nbWidths);
+            ASSERT_EQ(decoded, input)
+                    << nbElts << " elements of width " << layout.eltWidth;
+        }
+    }
 }
 
 } // namespace tests

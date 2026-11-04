@@ -72,6 +72,7 @@ bool ZL_bitSplit_topBitsAreZero(
  *     - sum(bitWidths) <= srcEltWidth * 8
  *     - Each bitWidths[i] <= dstEltWidths[i] * 8
  *     - Top bits of src elements (beyond sum(bitWidths)) must be zero
+ *     - src must not overlap any dstPtrs[i] buffer
  *
  * @param dstPtrs Array of destination pointers (one per bit range)
  * @param dstEltWidths Array of destination element widths in bytes

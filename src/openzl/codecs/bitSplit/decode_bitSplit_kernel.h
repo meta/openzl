@@ -25,6 +25,7 @@
  *     - bitWidths != NULL, each bitWidths[i] > 0
  *     - Each bitWidths[i] <= srcEltWidths[i] * 8
  *     - sum(bitWidths) <= dstEltWidth * 8
+ *     - dst must not overlap any srcPtrs[i] buffer
  *
  * @param dst Destination array for reconstructed values
  * @param dstEltWidth Element width of destination in bytes (1, 2, 4, or 8)

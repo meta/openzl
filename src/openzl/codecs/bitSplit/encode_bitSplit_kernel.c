@@ -36,30 +36,27 @@ static inline bool checkTopBitsZero(
         size_t nbElts,
         uint64_t mask)
 {
+    uint64_t allBits = 0;
     for (size_t e = 0; e < nbElts; e++) {
-        uint64_t value = 0;
         switch (srcEltWidth) {
             case 1:
-                value = ((const uint8_t*)src)[e];
+                allBits |= ((const uint8_t*)src)[e];
                 break;
             case 2:
-                value = ((const uint16_t*)src)[e];
+                allBits |= ((const uint16_t*)src)[e];
                 break;
             case 4:
-                value = ((const uint32_t*)src)[e];
+                allBits |= ((const uint32_t*)src)[e];
                 break;
             case 8:
-                value = ((const uint64_t*)src)[e];
+                allBits |= ((const uint64_t*)src)[e];
                 break;
             default:
                 assert(false);
                 break;
         }
-        if ((value & mask) != 0) {
-            return false;
-        }
     }
-    return true;
+    return (allBits & mask) == 0;
 }
 
 /*
@@ -284,61 +281,70 @@ bool ZL_bitSplit_topBitsAreZero(
     return true;
 }
 
-static inline void encodeElements(
+/*
+ * Generic encoder: extracts one field at a time, over blocks small enough to
+ * stay in L1 cache, so that each loop has fixed widths and vectorizes.
+ */
+#define BITSPLIT_ENCODE_BLOCK_ELTS 2048
+
+#define BITSPLIT_ENCODE_FIELD(SrcType, DstType)                          \
+    do {                                                                 \
+        const SrcType* restrict const in = (const SrcType*)src + start;  \
+        DstType* restrict const out      = (DstType*)dstPtrs[i] + start; \
+        SrcType const mask = (SrcType)(~0ULL >> (64 - bitWidths[i]));    \
+        for (size_t e = 0; e < blockElts; e++)                           \
+            out[e] = (DstType)((in[e] >> bitPos) & mask);                \
+    } while (0)
+
+#define BITSPLIT_ENCODE_FIELD_FROM(SrcType)           \
+    switch (dstEltWidths[i]) {                        \
+        case 1:                                       \
+            BITSPLIT_ENCODE_FIELD(SrcType, uint8_t);  \
+            break;                                    \
+        case 2:                                       \
+            BITSPLIT_ENCODE_FIELD(SrcType, uint16_t); \
+            break;                                    \
+        case 4:                                       \
+            BITSPLIT_ENCODE_FIELD(SrcType, uint32_t); \
+            break;                                    \
+        case 8:                                       \
+            BITSPLIT_ENCODE_FIELD(SrcType, uint64_t); \
+            break;                                    \
+        default:                                      \
+            assert(false);                            \
+            break;                                    \
+    }
+
+static void encodeBlock(
         void* const dstPtrs[],
         const size_t* dstEltWidths,
-        size_t nbElts,
+        size_t start,
+        size_t blockElts,
         const void* src,
         size_t srcEltWidth,
         const uint8_t* bitWidths,
         size_t nbWidths)
 {
-    for (size_t e = 0; e < nbElts; e++) {
-        uint64_t value = 0;
+    size_t bitPos = 0;
+    for (size_t i = 0; i < nbWidths; i++) {
         switch (srcEltWidth) {
             case 1:
-                value = ((const uint8_t*)src)[e];
+                BITSPLIT_ENCODE_FIELD_FROM(uint8_t);
                 break;
             case 2:
-                value = ((const uint16_t*)src)[e];
+                BITSPLIT_ENCODE_FIELD_FROM(uint16_t);
                 break;
             case 4:
-                value = ((const uint32_t*)src)[e];
+                BITSPLIT_ENCODE_FIELD_FROM(uint32_t);
                 break;
             case 8:
-                value = ((const uint64_t*)src)[e];
+                BITSPLIT_ENCODE_FIELD_FROM(uint64_t);
                 break;
             default:
                 assert(false);
                 break;
         }
-
-        size_t bitPos = 0;
-        for (size_t i = 0; i < nbWidths; i++) {
-            unsigned const width = bitWidths[i];
-            uint64_t const mask = (width >= 64) ? ~0ULL : ((1ULL << width) - 1);
-            uint64_t const extracted = (value >> bitPos) & mask;
-
-            switch (dstEltWidths[i]) {
-                case 1:
-                    ((uint8_t*)dstPtrs[i])[e] = (uint8_t)extracted;
-                    break;
-                case 2:
-                    ((uint16_t*)dstPtrs[i])[e] = (uint16_t)extracted;
-                    break;
-                case 4:
-                    ((uint32_t*)dstPtrs[i])[e] = (uint32_t)extracted;
-                    break;
-                case 8:
-                    ((uint64_t*)dstPtrs[i])[e] = extracted;
-                    break;
-                default:
-                    assert(false);
-                    break;
-            }
-
-            bitPos += width;
-        }
+        bitPos += bitWidths[i];
     }
 }
 
@@ -399,25 +405,19 @@ void ZL_bitSplitEncode(
     }
 
     /* Generic path */
-    switch (srcEltWidth) {
-        case 1:
-            encodeElements(
-                    dstPtrs, dstEltWidths, nbElts, src, 1, bitWidths, nbWidths);
-            break;
-        case 2:
-            encodeElements(
-                    dstPtrs, dstEltWidths, nbElts, src, 2, bitWidths, nbWidths);
-            break;
-        case 4:
-            encodeElements(
-                    dstPtrs, dstEltWidths, nbElts, src, 4, bitWidths, nbWidths);
-            break;
-        case 8:
-            encodeElements(
-                    dstPtrs, dstEltWidths, nbElts, src, 8, bitWidths, nbWidths);
-            break;
-        default:
-            assert(false);
-            break;
+    for (size_t start = 0; start < nbElts;
+         start += BITSPLIT_ENCODE_BLOCK_ELTS) {
+        size_t const blockElts = nbElts - start < BITSPLIT_ENCODE_BLOCK_ELTS
+                ? nbElts - start
+                : BITSPLIT_ENCODE_BLOCK_ELTS;
+        encodeBlock(
+                dstPtrs,
+                dstEltWidths,
+                start,
+                blockElts,
+                src,
+                srcEltWidth,
+                bitWidths,
+                nbWidths);
     }
 }
