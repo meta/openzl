@@ -74,7 +74,7 @@ describe('useCompressorRows', () => {
   it('rebuilds a row from defaults when its compressor changes', () => {
     // Patching would carry fields across that the new compressor has no use
     // for, so the row is rebuilt rather than merged.
-    const {result} = renderHook(() => useCompressorRows());
+    const {result} = renderHook(() => useCompressorRows([createCompressorRow(1, 'OpenZL')]));
 
     const fresh = createCompressorRow(1, 'OpenZL') as OpenZlRow;
     act(() => {
@@ -91,5 +91,20 @@ describe('useCompressorRows', () => {
     const rebuilt = result.current.rows[0] as OpenZlRow;
     expect(rebuilt.id).toBe(1);
     expect(rebuilt.optionsOpen).toBe(fresh.optionsOpen);
+  });
+
+  it.each(['zstd', 'gzip'] as const)('rejects a duplicate %s row and allows it after removal', (compressor) => {
+    const {result} = renderHook(() => useCompressorRows());
+    const before = result.current.rows;
+    act(() => result.current.changeCompressor(1, compressor));
+    expect(result.current.rows).toBe(before);
+
+    act(() => {
+      result.current.removeRow(compressor === 'zstd' ? 2 : 3);
+      result.current.changeCompressor(1, compressor);
+    });
+    expect(result.current.rows.filter((row) => row.compressor === compressor)).toEqual([
+      createCompressorRow(1, compressor),
+    ]);
   });
 });

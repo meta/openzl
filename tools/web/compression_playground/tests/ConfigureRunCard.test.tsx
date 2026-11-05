@@ -15,6 +15,7 @@ import {
   defaultLevelsFor,
   createCompressorRow,
   tickLabelLeft,
+  type CompressorName,
   type CompressorRow,
   type OpenZlProfile,
 } from '../src/compressors.ts';
@@ -77,6 +78,14 @@ function optionValues(select: HTMLElement): string[] {
     .map((option) => (option as HTMLOptionElement).value);
 }
 
+async function selectCompressor(position: number, compressor: CompressorName) {
+  const trigger = screen.getByRole('combobox', {name: `Compressor for row ${position}`});
+  fireEvent.click(trigger);
+  const listbox = await screen.findByRole('listbox');
+  fireEvent.click(within(listbox).getByRole('option', {name: compressor}));
+  await waitFor(() => expect(trigger).toHaveTextContent(compressor));
+}
+
 describe('ConfigureRunCard', () => {
   afterEach(() => {
     cleanup();
@@ -96,11 +105,11 @@ describe('ConfigureRunCard', () => {
     // that if the OpenZL options panel is collapsed, only two LEVEl labels remain
     expect(screen.getAllByText('LEVEL')).toHaveLength(3);
 
-    expect(screen.getByRole('combobox', {name: 'Compressor for row 1'})).toHaveValue('OpenZL');
+    expect(screen.getByRole('combobox', {name: 'Compressor for row 1'})).toHaveTextContent('OpenZL');
     expect(screen.getByRole('combobox', {name: 'Profile for row 1'})).toHaveTextContent('serial');
-    expect(screen.getByRole('combobox', {name: 'Compressor for row 2'})).toHaveValue('zstd');
+    expect(screen.getByRole('combobox', {name: 'Compressor for row 2'})).toHaveTextContent('zstd');
     expect(levelsTrigger(2)).toHaveTextContent('1, 5, 8, 12, 15, 19');
-    expect(screen.getByRole('combobox', {name: 'Compressor for row 3'})).toHaveValue('gzip');
+    expect(screen.getByRole('combobox', {name: 'Compressor for row 3'})).toHaveTextContent('gzip');
     expect(levelsTrigger(3)).toHaveTextContent('1, 3, 4, 6, 7, 9');
   });
 
@@ -135,17 +144,41 @@ describe('ConfigureRunCard', () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
+  it('returns focus to the compressor trigger after closing or selecting', async () => {
+    const user = userEvent.setup();
+    renderConfigureRunCard();
+    const trigger = screen.getByRole('combobox', {name: 'Compressor for row 2'});
+
+    await user.click(trigger);
+    const listbox = await screen.findByRole('listbox');
+    await waitFor(() => expect(listbox).toHaveFocus());
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    await user.click(trigger);
+    const reopened = await screen.findByRole('listbox');
+    await user.click(within(reopened).getByRole('option', {name: 'OpenZL'}));
+    await waitFor(() => {
+      expect(trigger).toHaveTextContent('OpenZL');
+      expect(trigger).toHaveFocus();
+    });
+  });
+
   it('offers every compressor and OpenZL profile', async () => {
     renderConfigureRunCard();
 
-    expect(optionValues(screen.getByRole('combobox', {name: 'Compressor for row 1'}))).toEqual([
-      'OpenZL',
-      'zstd',
-      'gzip',
-    ]);
+    const compressorTrigger = screen.getByRole('combobox', {name: 'Compressor for row 1'});
+    fireEvent.click(compressorTrigger);
+    const compressors = await screen.findByRole('listbox');
+    expect(
+      within(compressors)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['OpenZL', 'zstd', 'gzip']);
+    fireEvent.click(compressorTrigger);
 
     fireEvent.click(screen.getByRole('combobox', {name: 'Profile for row 1'}));
-    const listbox = await screen.findByRole('listbox');
+    const listbox = await screen.findByRole('listbox', {name: 'Profile for row 1'});
     const listed = within(listbox)
       .getAllByRole('option')
       .map((option) => option.textContent);
@@ -158,6 +191,51 @@ describe('ConfigureRunCard', () => {
     expect(listed.slice(0, firstUnrunnable).every((p) => isBrowserSupportedProfile(p as OpenZlProfile))).toBe(true);
     expect(listed.slice(firstUnrunnable).some((p) => isBrowserSupportedProfile(p as OpenZlProfile))).toBe(false);
   });
+
+  it.each(['zstd', 'gzip'] as const)(
+    'disables an existing %s choice and explains multiple levels on hover',
+    async (compressor) => {
+      const user = userEvent.setup();
+      renderConfigureRunCard();
+      await user.click(screen.getByRole('button', {name: 'Add compressor'}));
+      const trigger = screen.getByRole('combobox', {name: 'Compressor for row 4'});
+      await user.click(trigger);
+      const listbox = await screen.findByRole('listbox');
+      const option = within(listbox).getByRole('option', {name: compressor});
+
+      expect(option).toHaveAttribute('aria-disabled', 'true');
+      expect(within(listbox).getByRole('option', {name: 'OpenZL'})).not.toHaveAttribute('aria-disabled', 'true');
+      const description = `${compressor} is already selected. Select multiple levels in its existing row.`;
+      const describedBy = option.getAttribute('aria-describedby') ?? '';
+      expect(document.getElementById(describedBy)).toHaveTextContent(description);
+
+      await user.hover(within(option).getByText(compressor));
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(description);
+      await user.click(option);
+      expect(trigger).toHaveTextContent('OpenZL');
+      expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    },
+  );
+
+  it.each(['zstd', 'gzip'] as const)(
+    'allows selecting %s again after its existing row is removed',
+    async (compressor) => {
+      renderConfigureRunCard();
+      fireEvent.click(screen.getByRole('button', {name: `Remove row ${compressor === 'zstd' ? 2 : 3}`}));
+      const trigger = screen.getByRole('combobox', {name: 'Compressor for row 1'});
+      fireEvent.click(trigger);
+      const listbox = await screen.findByRole('listbox');
+      const option = within(listbox).getByRole('option', {name: compressor});
+      expect(option).not.toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(option);
+      await waitFor(() => expect(trigger).toHaveTextContent(compressor));
+      expect(levelsTrigger(1)).toBeEnabled();
+
+      fireEvent.click(trigger);
+      const reopened = await screen.findByRole('listbox');
+      expect(within(reopened).getByRole('option', {name: compressor})).not.toHaveAttribute('aria-disabled', 'true');
+    },
+  );
 
   it('names the levels trigger with the text a voice user can see', async () => {
     // WCAG 2.5.3: a static aria-label would override the selected levels and leave
@@ -385,25 +463,21 @@ describe('ConfigureRunCard', () => {
     expect(candidates).toHaveValue('6');
   });
 
-  it('swaps the second dropdown when the compressor changes', () => {
-    renderConfigureRunCard();
+  it('swaps the second dropdown when the compressor changes', async () => {
+    renderConfigureRunCard([createCompressorRow(1, 'OpenZL'), createCompressorRow(2, 'zstd')]);
 
-    fireEvent.change(screen.getByRole('combobox', {name: 'Compressor for row 2'}), {
-      target: {value: 'OpenZL'},
-    });
+    await selectCompressor(2, 'OpenZL');
     expect(screen.getByRole('combobox', {name: 'Profile for row 2'})).toHaveTextContent('serial');
     // Two OpenZL rows now, each with its own TRAIN checkbox.
     expect(screen.getAllByRole('checkbox', {name: 'TRAIN'})).toHaveLength(2);
 
-    fireEvent.change(screen.getByRole('combobox', {name: 'Compressor for row 1'}), {
-      target: {value: 'gzip'},
-    });
+    await selectCompressor(1, 'gzip');
     expect(levelsTrigger(1)).toHaveTextContent('1, 3, 4, 6, 7, 9');
     expect(screen.queryByRole('combobox', {name: 'OpenZL level for row 1'})).not.toBeInTheDocument();
   });
 
   it('resets dependent fields when the compressor changes', async () => {
-    renderConfigureRunCard();
+    renderConfigureRunCard([createCompressorRow(1, 'OpenZL'), createCompressorRow(2, 'zstd')]);
 
     const levels = await openLevels(2);
     fireEvent.click(levels.getByRole('checkbox', {name: 'Level 19'}));
@@ -412,9 +486,7 @@ describe('ConfigureRunCard', () => {
     });
 
     // gzip has no level 19, so the row falls back to its own default set.
-    fireEvent.change(screen.getByRole('combobox', {name: 'Compressor for row 2'}), {
-      target: {value: 'gzip'},
-    });
+    await selectCompressor(2, 'gzip');
     expect(levelsTrigger(2)).toHaveTextContent('1, 3, 4, 6, 7, 9');
   });
 
@@ -443,7 +515,7 @@ describe('ConfigureRunCard', () => {
     renderConfigureRunCard();
 
     fireEvent.click(screen.getByRole('button', {name: 'Add compressor'}));
-    expect(screen.getByRole('combobox', {name: 'Compressor for row 4'})).toHaveValue('OpenZL');
+    expect(screen.getByRole('combobox', {name: 'Compressor for row 4'})).toHaveTextContent('OpenZL');
     expect(screen.getByTestId('compressor-ids')).toHaveTextContent(/^1,2,3,4$/);
 
     fireEvent.click(screen.getByRole('button', {name: 'Remove row 4'}));
@@ -451,7 +523,7 @@ describe('ConfigureRunCard', () => {
     expect(screen.getByTestId('compressor-ids')).toHaveTextContent(/^1,2,3$/);
 
     fireEvent.click(screen.getByRole('button', {name: 'Add compressor'}));
-    expect(screen.getByRole('combobox', {name: 'Compressor for row 4'})).toHaveValue('OpenZL');
+    expect(screen.getByRole('combobox', {name: 'Compressor for row 4'})).toHaveTextContent('OpenZL');
     expect(screen.getByTestId('compressor-ids')).toHaveTextContent(/^1,2,3,5$/);
   });
 
