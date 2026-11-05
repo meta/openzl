@@ -68,7 +68,12 @@ export function useCompressorRows(initialRows?: readonly CompressorRow[]): Compr
     changeCompressor: (id: number, compressor: CompressorName) => {
       // A fresh row resets the dependent fields: a zstd level of 19 is not a
       // valid OpenZL level, and a profile means nothing to gzip.
-      setRows((current) => current.map((row) => (row.id === id ? createCompressorRow(id, compressor) : row)));
+      setRows((current) => {
+        if (compressor !== 'OpenZL' && current.some((row) => row.id !== id && row.compressor === compressor)) {
+          return current;
+        }
+        return current.map((row) => (row.id === id ? createCompressorRow(id, compressor) : row));
+      });
     },
   };
 }

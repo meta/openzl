@@ -47,6 +47,7 @@ import {isBrowserSupportedProfile, profileDescription} from '../wasmProfiles.ts'
 
 interface CompressorRowProps {
   row: CompressorRow;
+  currentRows: readonly CompressorRow[];
   position: number;
   canRemove: boolean;
   onPatch: PatchRow;
@@ -500,7 +501,27 @@ function LevelsPicker({row, position, onPatch}: {row: ZstdRow | GzipRow; positio
   );
 }
 
-function CompressorRowCard({row, position, canRemove, onPatch, onCompressorChange, onRemove}: CompressorRowProps) {
+function CompressorRowCard({
+  row,
+  currentRows,
+  position,
+  canRemove,
+  onPatch,
+  onCompressorChange,
+  onRemove,
+}: CompressorRowProps) {
+  const helperTooltip = useSlotRecipe({key: 'helperTooltip'})();
+  const triggerId = `row-${row.id}-compressor`;
+  const collection = createListCollection({
+    items: COMPRESSOR_NAMES.map((name) => ({
+      label: name,
+      value: name,
+      disabled: name !== 'OpenZL' && currentRows.some((other) => other.id !== row.id && other.compressor === name),
+      description: `${name} is already selected. Select multiple levels in its existing row.`,
+      descriptionId: `row-${row.id}-compressor-${name}-description`,
+    })),
+    isItemDisabled: (item) => item.disabled,
+  });
   return (
     <Box
       bg="pg.canvas"
@@ -515,34 +536,77 @@ function CompressorRowCard({row, position, canRemove, onPatch, onCompressorChang
       gap="4px">
       <Box display="flex" gap="8px" alignItems="end">
         <VStack flex="1" minW={0} gap="6px" align="stretch">
-          <chakra.label
-            htmlFor={`row-${row.id}-compressor`}
-            color="pg.faint"
-            fontSize="11px"
-            fontWeight="semibold"
-            m={0}>
+          <chakra.label htmlFor={triggerId} color="pg.faint" fontSize="11px" fontWeight="semibold" m={0}>
             COMPRESSOR
           </chakra.label>
-          <NativeSelect.Root>
-            <NativeSelect.Field
-              id={`row-${row.id}-compressor`}
-              aria-label={`Compressor for row ${position}`}
-              height="36px"
-              fontSize="14px"
-              color="pg.ink"
-              bg="pg.surface"
-              borderColor="pg.border"
-              borderRadius="6px"
-              value={row.compressor}
-              onChange={(event) => onCompressorChange(row.id, event.target.value as CompressorName)}>
-              {COMPRESSOR_NAMES.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </NativeSelect.Field>
-            <NativeSelect.Indicator />
-          </NativeSelect.Root>
+          <Select.Root
+            ids={{trigger: triggerId}}
+            collection={collection}
+            size="sm"
+            value={[row.compressor]}
+            onValueChange={({value}) => {
+              const [name] = value;
+              if (name !== undefined) {
+                onCompressorChange(row.id, name as CompressorName);
+              }
+            }}>
+            <Select.Label srOnly>Compressor for row {position}</Select.Label>
+            <Select.Control>
+              <Select.Trigger
+                height="36px"
+                fontSize="14px"
+                color="pg.ink"
+                bg="pg.surface"
+                borderColor="pg.border"
+                borderRadius="6px">
+                <Select.ValueText />
+              </Select.Trigger>
+              <Select.IndicatorGroup>
+                <Select.Indicator />
+              </Select.IndicatorGroup>
+            </Select.Control>
+            <Select.Positioner>
+              <Select.Content color="pg.ink" bg="pg.surface">
+                {collection.items.map((item) => (
+                  <Select.Item
+                    key={item.value}
+                    item={item}
+                    _highlighted={{bg: 'pg.chip'}}
+                    _disabled={{pointerEvents: 'auto'}}
+                    aria-describedby={item.disabled ? item.descriptionId : undefined}>
+                    <Tooltip.Root
+                      disabled={!item.disabled}
+                      openDelay={200}
+                      positioning={{placement: 'right', gutter: 8}}>
+                      <Tooltip.Trigger asChild>
+                        <Select.ItemText>{item.label}</Select.ItemText>
+                      </Tooltip.Trigger>
+                      <Portal>
+                        <Tooltip.Positioner>
+                          <Tooltip.Content css={helperTooltip.content}>
+                            <Tooltip.Arrow>
+                              <Tooltip.ArrowTip css={helperTooltip.arrowTip} />
+                            </Tooltip.Arrow>
+                            {item.description}
+                          </Tooltip.Content>
+                        </Tooltip.Positioner>
+                      </Portal>
+                    </Tooltip.Root>
+                    <Select.ItemIndicator />
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Positioner>
+            <Box srOnly>
+              {collection.items
+                .filter((item) => item.disabled)
+                .map((item) => (
+                  <Box as="span" key={item.value} id={item.descriptionId}>
+                    {item.description}
+                  </Box>
+                ))}
+            </Box>
+          </Select.Root>
         </VStack>
 
         <VStack gap="6px" align="stretch" flexShrink={0}>
@@ -614,6 +678,7 @@ export default function ConfigureRunCard({
           <CompressorRowCard
             key={row.id}
             row={row}
+            currentRows={rows}
             position={index + 1}
             canRemove={rows.length > 1}
             onPatch={patchRow}
