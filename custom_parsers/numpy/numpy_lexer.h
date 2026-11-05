@@ -25,6 +25,10 @@ ZL_BEGIN_C_DECLS
  * in Fortran order when fortran_order is True.
  * A .npz file is a zip archive of .npy members: `np.savez` stores them, and
  * `np.savez_compressed` deflates them.
+ * A pickle of protocol 2 to 5, as written by `pickle.dump` or
+ * `pandas.to_pickle`, holds the bytes of the arrays it pickles, which the
+ * pickle lexer finds (custom_parsers/pickle_lexer.h), unless Python 3 wrote it
+ * with protocol 2.
  */
 
 #define ZL_NUMPY_MAX_DIMS 8
@@ -32,12 +36,17 @@ ZL_BEGIN_C_DECLS
 /// to parse them.
 #define ZL_NUMPY_MAX_MEMBERS ((size_t)1 << 17)
 #define ZL_NUMPY_MAX_HEADER_SIZE ((size_t)1 << 20)
+/// Smaller pickled arrays stay in the opcodes around them, with which they
+/// compress better than apart. It also bounds the number of tokens of a pickle
+/// by its size.
+#define ZL_NUMPY_MIN_PICKLED_ARRAY_SIZE ((size_t)16 << 10)
 
 typedef enum {
-    ZL_NumPyTokenType_header, // .npy magic and header, zip records
+    ZL_NumPyTokenType_header, // .npy magic and header, zip records, pickle
+                              // opcodes
     ZL_NumPyTokenType_array,  // the bytes of an array
     ZL_NumPyTokenType_gap, // anything else: deflated or non-.npy members, bytes
-                           // past an array
+                           // past an array or a pickle
 } ZL_NumPyTokenType;
 
 typedef struct {
@@ -49,8 +58,8 @@ typedef struct {
 
     /// The following fields are only valid for array tokens.
 
-    /// Name of the .npz member, NULL in a .npy file. Points into the file, not
-    /// NUL-terminated.
+    /// Name of the .npz member, NULL in a .npy file or a pickle. Points into
+    /// the file, not NUL-terminated.
     const char* name;
     size_t nameSize;
     /// Kind of the elements, the letter of descr ('f' for floats, 'i' for
@@ -66,19 +75,21 @@ typedef struct {
 } ZL_NumPyToken;
 
 /**
- * Lexes the .npy file or .npz archive in @p src into tokens that cover it in
- * order. In a .npy file, the header is followed by the array, then by a gap
- * holding the bytes past it, if any. In a .npz archive, each stored .npy
+ * Lexes the .npy file, .npz archive or pickle in @p src into tokens that cover
+ * it in order. In a .npy file, the header is followed by the array, then by a
+ * gap holding the bytes past it, if any. In a .npz archive, each stored .npy
  * member becomes a header and an array, between the header tokens of the zip
- * records. Empty arrays produce no token. Adjacent header tokens, and adjacent
- * gaps, are merged.
+ * records. In a pickle, the arrays of at least ZL_NUMPY_MIN_PICKLED_ARRAY_SIZE
+ * bytes are between headers holding the opcodes, and the bytes the pickle
+ * lexer cannot read are a gap. Empty arrays produce no token. Adjacent header
+ * tokens, and adjacent gaps, are merged.
  *
  * When @p tokens is NULL, the tokens are counted without being written, so
  * that the caller can size @p tokens before lexing again.
  *
  * @returns the number of tokens written to @p tokens, or counted when
  *          @p tokens is NULL. Errors are graph_parser_malformedInput for an
- *          input that is neither a .npy file nor a zip archive, and
+ *          input that is neither a .npy file, a pickle nor a zip archive, and
  *          graph_parser_unhandledInput for an archive of more than
  *          ZL_NUMPY_MAX_MEMBERS members.
  */

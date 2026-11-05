@@ -28,6 +28,17 @@ zs_library(
 
 cpp_library(
     # @autodeps-skip
+    name = "pickle_lexer",
+    srcs = ["pickle_lexer.c"],
+    headers = relative_headers(["pickle_lexer.h"]) | {"pickle_lexer.h": "pickle_lexer.h"},
+    header_namespace = "",
+    deps = [
+        "..:zstronglib",
+    ],
+)
+
+cpp_library(
+    # @autodeps-skip
     name = "zip_lexer",
     srcs = ["zip_lexer.c"],
     headers = relative_headers(["zip_lexer.h"]) | {"zip_lexer.h": "zip_lexer.h"},

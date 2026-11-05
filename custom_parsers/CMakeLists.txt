@@ -13,6 +13,19 @@ target_link_libraries(zip_lexer
 add_dependencies(zip_lexer openzl)
 apply_openzl_compile_options_to_target(zip_lexer)
 
+# Define pickle_lexer library
+add_library(pickle_lexer
+    pickle_lexer.c
+)
+target_include_directories(pickle_lexer PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR})
+target_link_libraries(pickle_lexer
+    openzl
+)
+add_dependencies(pickle_lexer openzl)
+apply_openzl_compile_options_to_target(pickle_lexer)
+
 # Define pytorch_model_parser library
 add_library(pytorch_model_parser
     pytorch_model_parser.c

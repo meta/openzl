@@ -20,6 +20,7 @@ zs_unittest(
         "..:numpy_parser",
         "../..:custom_parsers",
         "../../../cpp:openzl_cpp",
+        "../../tests:pickle_builder",
         ":numpy_builder",
     ],
 )
@@ -27,7 +28,10 @@ zs_unittest(
 zs_cxxbinary(
     name = "numpy_fuzzer_generator",
     srcs = ["numpy_fuzzer_generator.cpp"],
-    deps = [":numpy_builder"],
+    deps = [
+        "../../tests:pickle_builder",
+        ":numpy_builder",
+    ],
 )
 
 fbcode_configured_alias(
@@ -49,6 +53,7 @@ zs_fuzzers(
         "..:numpy_parser",
         "../../../cpp:openzl_cpp",
         "../../../tests/datagen:datagen",
+        "../../tests:pickle_builder",
         "fbsource//xplat/security/lionhead/utils/lib_ftest:lib",
         ":numpy_builder",
     ],

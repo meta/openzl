@@ -15,6 +15,7 @@ target_include_directories(numpy_parser PRIVATE
     ${PROJECT_SOURCE_DIR})
 target_link_libraries(numpy_parser
     openzl
+    pickle_lexer
     shared_components
     zip_lexer
 )
