@@ -31,6 +31,7 @@ typedef struct {
     int noDecompress;
     int genericIntParam;
     ZL_DataArenaType sat;
+    int satSet; // 0: keep the library defaults
     size_t blockSize;
     unsigned total_bench_time_ms;
     int notification;
@@ -381,12 +382,14 @@ static void bench_filename(
 
     ZL_CCtx* const cctx = ZL_CCtx_create();
     assert(cctx != NULL);
-    (void)ZL_CCtx_setDataArena(cctx, bp.sat);
+    if (bp.satSet)
+        (void)ZL_CCtx_setDataArena(cctx, bp.sat);
     ZL_Compressor* const cgraph = ZL_Compressor_create();
     assert(cgraph != NULL);
     ZL_DCtx* const dctx = ZL_DCtx_create();
     assert(dctx != NULL);
-    (void)ZL_DCtx_setStreamArena(dctx, bp.sat);
+    if (bp.satSet)
+        (void)ZL_DCtx_setStreamArena(dctx, bp.sat);
     BenchPayload payload = {
         .name   = fDesc.name,
         .graphF = fDesc.graphF,
@@ -684,7 +687,9 @@ int main(int argc, const char* argv[])
         GET_INT_FLAG("--param", bp.genericIntParam);
         GET_INT_FLAG("-p", bp.genericIntParam);
 
-        CMD_FLAG("--stackArena", bp.sat = ZL_DataArenaType_stack);
+        CMD_FLAG(
+                "--stackArena", bp.sat = ZL_DataArenaType_stack; bp.satSet = 1);
+        CMD_FLAG("--heapArena", bp.sat = ZL_DataArenaType_heap; bp.satSet = 1);
 
         CMD_FLAG("-q", bp.notification = 0);
         CMD_FLAG("--quiet", bp.notification = 0);

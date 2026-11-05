@@ -192,7 +192,13 @@ ZL_Report ZL_DCtx_resetParameters(ZL_DCtx* dctx);
  * @param sat Stream Arena type to set
  * @return Error code or success
  *
- * @note Default Stream Arena is HeapArena
+ * @note Default Stream Arena is StackArena. It keeps its buffer across chunks
+ * and decompressions, which avoids reallocating and page-faulting stream
+ * buffers every time, at the cost of retaining that memory between
+ * decompressions and of a higher peak, since streams are only released at the
+ * end of each chunk. Select ZL_DataArenaType_heap to return stream memory to
+ * the allocator after each chunk, and free each stream as soon as it is
+ * consumed.
  */
 #include "openzl/zl_data.h" // ZL_DataArenaType
 ZL_Report ZL_DCtx_setStreamArena(ZL_DCtx* dctx, ZL_DataArenaType sat);

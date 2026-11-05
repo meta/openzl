@@ -123,7 +123,9 @@ ZL_DCtx* ZL_DCtx_create(void)
         ZL_DCtx_free(dctx);
         return NULL;
     }
-    dctx->streamArena = ALLOC_HeapArena_create();
+    // Streams are reallocated at every chunk: keeping their buffers across
+    // chunks and decompressions avoids page faults (see ZL_DCtx_setStreamArena)
+    dctx->streamArena = ALLOC_StackArena_create();
     if (!dctx->streamArena) {
         ZL_DCtx_free(dctx);
         return NULL;
