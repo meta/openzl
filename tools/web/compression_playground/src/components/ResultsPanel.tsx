@@ -4,6 +4,8 @@ import {useState} from 'react';
 import {Box, Heading, Text, VStack} from '@chakra-ui/react';
 import {LuArrowRight, LuChartLine, LuChartSpline, LuMicroscope, LuMonitor} from 'react-icons/lu';
 import {isRunInProgress, type BenchmarkJob, type Candidate, type JobResult, type RunState} from '../benchmarkTypes.ts';
+import {toggleCodec} from '../charts.ts';
+import type {CompressorName} from '../compressors.ts';
 import {formatBytes, measurementKey, resultsOf} from '../measurements.ts';
 import MeasurementsTable from './MeasurementsTable.tsx';
 import RatioSpeedCharts from './RatioSpeedCharts.tsx';
@@ -73,6 +75,19 @@ export default function ResultsPanel({runState}: ResultsPanelProps) {
   // made on, which keeps a key from the last run off the same job in this one.
   const [hovered, setHovered] = useState<{key: string; results: readonly JobResult[]} | null>(null);
   const highlighted = !isRunning && hovered?.results === results ? hovered.key : null;
+  // The codecs switched off in the legend, for the charts and the table alike.
+  // Kept while there are results, so a codec hidden mid-run stays hidden as its
+  // points arrive, and dropped once the next run clears them.
+  const [hidden, setHidden] = useState<ReadonlySet<CompressorName>>(new Set());
+  if (!hasResults && hidden.size > 0) {
+    setHidden(new Set());
+  }
+  const onToggle = (compressor: CompressorName) => {
+    setHidden((current) => toggleCodec(current, compressor));
+    // Rows that go away under a pointer that has not moved send no leave, and
+    // the key would pick the row out again when its codec comes back.
+    setHovered(null);
+  };
   return (
     <Box
       as="section"
@@ -107,9 +122,12 @@ export default function ResultsPanel({runState}: ResultsPanelProps) {
             Run failed: {runState.message}
           </Text>
         )}
-        {hasResults && <RatioSpeedCharts results={results} highlighted={highlighted} />}
+        {hasResults && (
+          <RatioSpeedCharts results={results} highlighted={highlighted} hidden={hidden} onToggle={onToggle} />
+        )}
         <MeasurementsTable
           runState={runState}
+          hidden={hidden}
           onHighlight={isRunning ? undefined : (key) => setHovered(key === null ? null : {key, results})}
         />
         <FailureList runState={runState} />

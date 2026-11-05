@@ -3,6 +3,7 @@
 import {useState} from 'react';
 import {Box, Text, chakra} from '@chakra-ui/react';
 import type {JobResult, RunState} from '../benchmarkTypes.ts';
+import type {CompressorName} from '../compressors.ts';
 import {
   barFraction,
   formatBytes,
@@ -224,13 +225,21 @@ function nextSort(current: Sort, key: SortKey): Sort {
   return {key, direction: FIRST_DIRECTION[key]};
 }
 
-/** `onHighlight` hears the `measurementKey` of the row under the pointer, or null once it leaves. */
+const NONE_HIDDEN: ReadonlySet<CompressorName> = new Set();
+
+/**
+ * `onHighlight` hears the `measurementKey` of the row under the pointer, or
+ * null once it leaves. Rows of a `hidden` codec are left out; the bars still
+ * scale to the whole run, so they do not move as codecs come and go.
+ */
 export default function MeasurementsTable({
   runState,
   onHighlight,
+  hidden = NONE_HIDDEN,
 }: {
   runState: RunState;
   onHighlight?: (key: string | null) => void;
+  hidden?: ReadonlySet<CompressorName>;
 }) {
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
 
@@ -239,7 +248,7 @@ export default function MeasurementsTable({
     return null;
   }
   const peaks: Peaks = peaksOf(results);
-  const rows = sortMeasurements(results, sort);
+  const rows = sortMeasurements(results, sort).filter((row) => !hidden.has(row.job.compressor));
 
   return (
     <Box display="flex" flexDirection="column" gap="16px" pt="12px">

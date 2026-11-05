@@ -2,13 +2,16 @@
 
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
+import {useState} from 'react';
 import {afterEach, beforeAll, describe, expect, it} from 'vitest';
 import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {ChakraProvider} from '@chakra-ui/react';
 import RatioSpeedCharts from '../src/components/RatioSpeedCharts.tsx';
 import ResultsPanel from '../src/components/ResultsPanel.tsx';
+import {toggleCodec} from '../src/charts.ts';
 import {playgroundSystem} from '../src/theme.ts';
 import type {BenchmarkJob, JobResult} from '../src/benchmarkTypes.ts';
+import type {CompressorName} from '../src/compressors.ts';
 
 /**
  * `ResponsiveContainer` measures its parent, and jsdom reports every element as
@@ -66,10 +69,25 @@ const RESULTS = [
   result({compressor: 'gzip', rowId: 3, level: 6}, {ratio: 342, compressMBps: 162}),
 ];
 
+/** Holds the hidden codecs the way `ResultsPanel` does, so a chip click takes effect. */
+function Charts({results, highlighted}: {results: readonly JobResult[]; highlighted: string | null}) {
+  const [hidden, setHidden] = useState<ReadonlySet<CompressorName>>(new Set());
+  return (
+    <RatioSpeedCharts
+      results={results}
+      highlighted={highlighted}
+      hidden={hidden}
+      onToggle={(compressor) => {
+        setHidden((current) => toggleCodec(current, compressor));
+      }}
+    />
+  );
+}
+
 function renderCharts(results = RESULTS, highlighted: string | null = null) {
   return render(
     <ChakraProvider value={playgroundSystem}>
-      <RatioSpeedCharts results={results} highlighted={highlighted} />
+      <Charts results={results} highlighted={highlighted} />
     </ChakraProvider>,
   );
 }
@@ -135,8 +153,18 @@ describe('RatioSpeedCharts', () => {
       expect(scatter.querySelectorAll('.recharts-scatter-line path')).toHaveLength(points === 2 ? 1 : 0);
     }
     expect(screen.getAllByText('OpenZL')).toHaveLength(1);
-    const legend = screen.getByText('OpenZL').closest('div') as HTMLElement;
+    const legend = screen.getByRole('button', {name: 'OpenZL, 5 points'});
     expect(within(legend).getByText('5')).toBeInTheDocument();
+
+    fireEvent.click(legend);
+    expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(0);
+    expect(screen.getAllByText('Every codec is hidden. Click one below to show it.')).toHaveLength(2);
+
+    fireEvent.click(legend);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(10);
+    });
+    expect(container.querySelectorAll('.recharts-scatter-line path')).toHaveLength(4);
   });
 
   it('keeps zstd and gzip levels connected on both charts', async () => {
@@ -159,10 +187,27 @@ describe('RatioSpeedCharts', () => {
 
   it('counts each codec once in the legend, however many rows produced it', () => {
     renderCharts();
-    const legend = screen.getByText('OpenZL').closest('div');
-    expect(legend).not.toBeNull();
-    expect(within(legend as HTMLElement).getByText('2')).toBeInTheDocument();
-    expect(within(screen.getByText('gzip').closest('div') as HTMLElement).getByText('1')).toBeInTheDocument();
+    expect(within(screen.getByRole('button', {name: /OpenZL/})).getByText('2')).toBeInTheDocument();
+    expect(within(screen.getByRole('button', {name: /gzip/})).getByText('1')).toBeInTheDocument();
+  });
+
+  it('lists a codec either chart plots, counting the larger of its two', () => {
+    // An infinite speed is not plotted, so these points differ between charts:
+    // zstd has two on the compression chart and three on the decompression one,
+    // and gzip has none on the compression chart at all.
+    renderCharts([
+      result({compressor: 'zstd', id: 'z1', level: 1}, {compressMBps: Infinity, decompressMBps: 200}),
+      result({compressor: 'zstd', id: 'z2', level: 5}, {compressMBps: 100, decompressMBps: 210}),
+      result({compressor: 'zstd', id: 'z3', level: 9}, {compressMBps: 150, decompressMBps: 220}),
+      result({compressor: 'gzip', id: 'g6', level: 6}, {compressMBps: Infinity, decompressMBps: 90}),
+    ]);
+
+    const group = screen.getByRole('group', {name: 'Codecs shown on the charts and in the table'});
+    expect(
+      within(group)
+        .getAllByRole('button')
+        .map((chip) => chip.getAttribute('aria-label')),
+    ).toEqual(['zstd, 3 points', 'gzip, 1 point']);
   });
 
   it('takes every colour from the theme, so the scheme can change them', async () => {
@@ -281,6 +326,163 @@ describe('RatioSpeedCharts', () => {
       </ChakraProvider>,
     );
     expect(container.querySelectorAll('.highlighted-point')).toHaveLength(0);
+  });
+
+  it('offers every codec as a toggle, all shown to begin with', () => {
+    renderCharts();
+    const group = screen.getByRole('group', {name: 'Codecs shown on the charts and in the table'});
+    const chips = within(group).getAllByRole('button');
+    expect(chips.map((chip) => chip.textContent)).toEqual(['OpenZL2', 'zstd1', 'gzip1']);
+    for (const chip of chips) {
+      expect(chip).toHaveAttribute('aria-pressed', 'true');
+    }
+  });
+
+  it('hides a codec on both charts when its chip is clicked, and shows it again', async () => {
+    const {container} = await renderPlotted();
+    const gzip = screen.getByRole('button', {name: /gzip/});
+
+    fireEvent.click(gzip);
+    expect(gzip).toHaveAttribute('aria-pressed', 'false');
+    // gzip has one point on each chart.
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(6);
+    });
+
+    fireEvent.click(gzip);
+    expect(gzip).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(8);
+    });
+  });
+
+  it('fits the axes to the codecs still shown', async () => {
+    await renderPlotted();
+    // OpenZL's 15235x is the only ratio past 10k, so the 10k tick goes with it.
+    expect(screen.getAllByText('10k×')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', {name: /OpenZL/}));
+    await waitFor(() => {
+      expect(screen.queryAllByText('10k×')).toHaveLength(0);
+    });
+  });
+
+  it('says how to get the points back when every codec is hidden', async () => {
+    const {container} = await renderPlotted();
+    for (const codec of ['OpenZL', 'zstd', 'gzip']) {
+      fireEvent.click(screen.getByRole('button', {name: new RegExp(`^${codec}, \\d+ points?$`)}));
+    }
+    expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(0);
+    expect(screen.getAllByText('Every codec is hidden. Click one below to show it.')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', {name: /zstd/}));
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(2);
+    });
+    expect(screen.queryByText('Every codec is hidden. Click one below to show it.')).not.toBeInTheDocument();
+  });
+
+  it('picks out nothing for a highlighted row whose codec is hidden', async () => {
+    const {container} = await renderPlotted(RESULTS, 'trained-1-2');
+    expect(container.querySelectorAll('.highlighted-point')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', {name: /OpenZL/}));
+    await waitFor(() => {
+      expect(container.querySelectorAll('.highlighted-point')).toHaveLength(0);
+    });
+  });
+
+  it('says so when the codecs left have no point to plot', async () => {
+    // gzip measured nothing plottable, so it has no series and no chip, and
+    // hiding zstd leaves the plot with nothing to draw.
+    const results = [
+      result({compressor: 'zstd', rowId: 2, level: 1}, {ratio: 1450, compressMBps: 520}),
+      result({compressor: 'gzip', rowId: 3, level: 6}, {ratio: 0, compressMBps: 0}),
+    ];
+    await renderPlotted(results);
+
+    fireEvent.click(screen.getByRole('button', {name: /zstd/}));
+    await waitFor(() => {
+      expect(screen.getAllByText('Every codec is hidden. Click one below to show it.')).toHaveLength(2);
+    });
+  });
+
+  it('takes the rows of a hidden codec out of the table, and puts them back', async () => {
+    const results = [
+      result({compressor: 'zstd', id: 'z1', level: 1}, {ratio: 3, compressMBps: 500}),
+      result({compressor: 'gzip', id: 'g6', level: 6}, {ratio: 5, compressMBps: 50}),
+    ];
+    const {container} = render(
+      <ChakraProvider value={playgroundSystem}>
+        <ResultsPanel runState={{status: 'completed', results, failures: []}} />
+      </ChakraProvider>,
+    );
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol').length).toBeGreaterThan(0);
+    });
+    const gzip = screen.getByRole('button', {name: /^gzip/});
+
+    fireEvent.click(gzip);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(2);
+    });
+    expect(screen.queryByRole('row', {name: /gzip/})).not.toBeInTheDocument();
+    expect(screen.getByRole('row', {name: /zstd/})).toBeInTheDocument();
+
+    fireEvent.click(gzip);
+    expect(screen.getByRole('row', {name: /gzip/})).toBeInTheDocument();
+  });
+
+  it('does not pick the row out again when its codec comes back under a pointer that has not moved', async () => {
+    const results = [
+      result({compressor: 'zstd', id: 'z1', level: 1}, {ratio: 3, compressMBps: 500}),
+      result({compressor: 'gzip', id: 'g6', level: 6}, {ratio: 5, compressMBps: 50}),
+    ];
+    const {container} = render(
+      <ChakraProvider value={playgroundSystem}>
+        <ResultsPanel runState={{status: 'completed', results, failures: []}} />
+      </ChakraProvider>,
+    );
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol').length).toBeGreaterThan(0);
+    });
+    fireEvent.mouseEnter(screen.getByRole('row', {name: /gzip/}));
+    await waitFor(() => {
+      expect(container.querySelectorAll('.highlighted-point')).toHaveLength(2);
+    });
+
+    // The row goes away without a mouseleave, as it does when a key toggles the chip.
+    const gzip = screen.getByRole('button', {name: /^gzip/});
+    fireEvent.click(gzip);
+    fireEvent.click(gzip);
+    expect(container.querySelectorAll('.highlighted-point')).toHaveLength(0);
+  });
+
+  it('forgets the hidden codecs once the next run clears the results', async () => {
+    const results = [
+      result({compressor: 'zstd', id: 'z1', level: 1}, {ratio: 3, compressMBps: 500}),
+      result({compressor: 'gzip', id: 'g6', level: 6}, {ratio: 5, compressMBps: 50}),
+    ];
+    const {rerender} = render(
+      <ChakraProvider value={playgroundSystem}>
+        <ResultsPanel runState={{status: 'completed', results, failures: []}} />
+      </ChakraProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', {name: /^gzip/}));
+    expect(screen.queryByRole('row', {name: /gzip/})).not.toBeInTheDocument();
+
+    rerender(
+      <ChakraProvider value={playgroundSystem}>
+        <ResultsPanel runState={{status: 'loading'}} />
+      </ChakraProvider>,
+    );
+    rerender(
+      <ChakraProvider value={playgroundSystem}>
+        <ResultsPanel runState={{status: 'completed', results, failures: []}} />
+      </ChakraProvider>,
+    );
+    expect(screen.getByRole('button', {name: /^gzip/})).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('row', {name: /gzip/})).toBeInTheDocument();
   });
 
   it('places points on a log scale rather than a linear one', async () => {

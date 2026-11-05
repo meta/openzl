@@ -52,6 +52,18 @@ export function buildSeries(results: readonly JobResult[], axis: SpeedAxis): Rea
   return bySeries;
 }
 
+/** `hidden` with `compressor` taken out if it was in it, put in if it was not. */
+export function toggleCodec(
+  hidden: ReadonlySet<CompressorName>,
+  compressor: CompressorName,
+): ReadonlySet<CompressorName> {
+  const next = new Set(hidden);
+  if (!next.delete(compressor)) {
+    next.add(compressor);
+  }
+  return next;
+}
+
 /** Named with its codec and its OpenZL profile or zstd/gzip level: a tooltip shows one point. */
 function pointLabel(result: JobResult): string {
   const job = result.job;
