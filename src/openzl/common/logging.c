@@ -6,6 +6,28 @@
 
 int ZL_g_logLevel = ZL_LOG_LVL;
 
+/* By default, logs are written to stderr.
+ * An application can build OpenZL with -DZL_LOG_VPRINTF_FUNC=name
+ * to send them to its own `void name(const char* fmt, va_list args)` instead,
+ * such as -DZL_LOG_VPRINTF_FUNC=REvprintf for an R package. */
+#ifdef ZL_LOG_VPRINTF_FUNC
+void ZL_LOG_VPRINTF_FUNC(const char* fmt, va_list args);
+#else
+static void ZL_stderrVPrintf(const char* fmt, va_list args)
+{
+    vfprintf(stderr, fmt, args);
+}
+#    define ZL_LOG_VPRINTF_FUNC ZL_stderrVPrintf
+#endif
+
+static void ZL_logPrintf(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    ZL_LOG_VPRINTF_FUNC(fmt, args);
+    va_end(args);
+}
+
 // Note: requires -Wno-format-nonliteral to build without a warning.
 
 void ZL_LOG_func(
@@ -43,9 +65,9 @@ void ZL_VLOG_func(
         va_list args)
 {
     (void)func;
-    fprintf(stderr, "%s:%d: ", file, line);
-    vfprintf(stderr, fmt, args);
-    fprintf(stderr, "\n");
+    ZL_logPrintf("%s:%d: ", file, line);
+    ZL_LOG_VPRINTF_FUNC(fmt, args);
+    ZL_logPrintf("\n");
 }
 
 void ZL_VLOG_func_if_nonempty(
@@ -62,9 +84,9 @@ void ZL_VLOG_func_if_nonempty(
     int len = vsnprintf(NULL, 0, fmt, args_copy);
     va_end(args_copy);
     if (len > 0) {
-        fprintf(stderr, "%s:%d: %s", file, line, prefix);
-        vfprintf(stderr, fmt, args);
-        fprintf(stderr, "\n");
+        ZL_logPrintf("%s:%d: %s", file, line, prefix);
+        ZL_LOG_VPRINTF_FUNC(fmt, args);
+        ZL_logPrintf("\n");
     }
 }
 
@@ -79,5 +101,5 @@ void ZL_RLOG_func(const char* fmt, ...)
 
 void ZL_VRLOG_func(const char* fmt, va_list args)
 {
-    vfprintf(stderr, fmt, args);
+    ZL_LOG_VPRINTF_FUNC(fmt, args);
 }

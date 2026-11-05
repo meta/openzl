@@ -75,9 +75,9 @@ static void stars(uint32_t* hist, size_t n)
         ZL_RLOG(V, "%2u: ", (uint32_t)i);
         size_t const stars = (hist[i] * kMaxStars) / sum;
         for (size_t s = 0; s < stars; ++s) {
-            putc('*', stderr);
+            ZL_RLOG(V, "*");
         }
-        putc('\n', stderr);
+        ZL_RLOG(V, "\n");
     }
 }
 
