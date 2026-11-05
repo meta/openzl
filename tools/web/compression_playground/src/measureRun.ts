@@ -65,7 +65,12 @@ async function* measure(job: BenchmarkJob, data: Uint8Array, openzl: OpenZL | nu
       if (job.training === null) {
         yield {
           type: 'result',
-          result: {...(await benchmarkOpenZL(openzl, data, base, job.iterations)), job, candidate: null},
+          result: {
+            ...(await benchmarkOpenZL(openzl, data, base, job.iterations)),
+            job,
+            candidate: null,
+            serializedCompressor: base,
+          },
         };
         return;
       }
@@ -87,7 +92,7 @@ async function* measure(job: BenchmarkJob, data: Uint8Array, openzl: OpenZL | nu
           yield {type: 'failure', failure: {job, candidate, message: messageOf(error)}};
           continue;
         }
-        yield {type: 'result', result: {...metrics, job, candidate}};
+        yield {type: 'result', result: {...metrics, job, candidate, serializedCompressor: compressor}};
       }
       return;
     }
