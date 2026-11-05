@@ -61,17 +61,9 @@ const ZSTD_RESULT = {
 afterEach(cleanup);
 
 describe('SetupColumn', () => {
-  it('points at the desktop app once there are results', () => {
+  it('does not mention the desktop app once there are results', () => {
     renderColumn({status: 'completed', results: [ZSTD_RESULT], failures: []});
 
-    expect(screen.getByRole('complementary', {name: 'Desktop app recommendation'})).toHaveTextContent(
-      /Benchmarking something large\? Get the desktop app/,
-    );
-  });
-
-  it('leaves the desktop app to the results panel before then', () => {
-    renderColumn({status: 'running', completedJobs: 0, totalJobs: 1, results: [], failures: [], step: null});
-
-    expect(screen.queryByRole('complementary', {name: 'Desktop app recommendation'})).not.toBeInTheDocument();
+    expect(screen.queryByText(/desktop app/i)).not.toBeInTheDocument();
   });
 });

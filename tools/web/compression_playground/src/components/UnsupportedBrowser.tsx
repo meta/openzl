@@ -105,18 +105,8 @@ export default function UnsupportedBrowser({blocker}: UnsupportedBrowserProps) {
             <Box aria-hidden="true" display="inline-flex" flexShrink={0} mt="2px" color="pg.ink">
               <LuMonitor size={18} />
             </Box>
-            {/* Says the desktop app works, not that it is faster. On a screen
-                that has just refused to run, "fastest" would imply this browser
-                is a slower option rather than no option at all. ResultsPanel
-                makes the speed case, where the reader has a working one.
-
-                Named but not linked, as in ResultsPanel: no download URL yet,
-                and an anchor without an href gets neither the link role nor
-                keyboard focus. */}
             <Text color="pg.ink" fontSize="14px" lineHeight="1.5" opacity={0.9} m={0}>
-              {isolationFailed
-                ? 'Try reloading the page, or opening it in a normal window. The OpenZL Playground desktop app works either way, and reads files straight off disk with no size limit.'
-                : `${SUPPORTED_BROWSERS} The OpenZL Playground desktop app works too, and reads files straight off disk with no size limit.`}
+              {isolationFailed ? 'Try reloading the page, or opening it in a normal window.' : SUPPORTED_BROWSERS}
             </Text>
           </Box>
         </Box>

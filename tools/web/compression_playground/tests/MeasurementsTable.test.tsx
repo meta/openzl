@@ -215,7 +215,6 @@ describe('ResultsPanel', () => {
     expect(screen.queryByText('No results yet')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', {name: 'How it works'})).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', {name: 'Reading the results'})).not.toBeInTheDocument();
-    expect(screen.queryByRole('complementary', {name: 'Desktop app recommendation'})).not.toBeInTheDocument();
     expect(screen.getByRole('table', {name: 'Measurements'})).toBeInTheDocument();
     expect(screen.getByText(/WebAssembly/)).toBeInTheDocument();
   });

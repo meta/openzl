@@ -2,7 +2,7 @@
 
 import {useState} from 'react';
 import {Box, Heading, Text, VStack} from '@chakra-ui/react';
-import {LuArrowRight, LuChartLine, LuChartSpline, LuMicroscope, LuMonitor} from 'react-icons/lu';
+import {LuChartLine, LuChartSpline, LuMicroscope} from 'react-icons/lu';
 import {isRunInProgress, type BenchmarkJob, type Candidate, type JobResult, type RunState} from '../benchmarkTypes.ts';
 import {toggleCodec} from '../charts.ts';
 import type {CompressorName} from '../compressors.ts';
@@ -271,26 +271,6 @@ export default function ResultsPanel({runState}: ResultsPanelProps) {
                 </Box>
               </VStack>
             </VStack>
-
-            <Box as="aside" aria-label="Desktop app recommendation" bg="pg.callout" borderRadius="12px" p="24px">
-              <VStack gap="12px" align="stretch">
-                <Box display="flex" alignItems="center" gap="10px" color="pg.ink" fontSize="15px" fontWeight="bold">
-                  <LuMonitor size={18} aria-hidden="true" />
-                  Get large files? Use the desktop app.
-                </Box>
-                <Text color="pg.ink" fontSize="14px" lineHeight="1.5" opacity={0.9} m={0}>
-                  The <Text as="strong">OpenZL Playground desktop app</Text> runs these exact benchmarks entirely on
-                  your own machine: it reads files straight off disk, so there is no practical size limit, training runs
-                  and Pareto frontiers all stay local.
-                </Text>
-                {/* Text, not Link, until the desktop app has a URL: an anchor with
-                  no href gets neither the link role nor keyboard focus, so it
-                  would only look interactive. */}
-                <Text color="pg.accent" fontSize="14px" fontWeight="bold" m={0}>
-                  Use the desktop app <LuArrowRight size={14} aria-hidden="true" />
-                </Text>
-              </VStack>
-            </Box>
           </>
         )}
       </VStack>

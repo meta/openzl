@@ -63,7 +63,6 @@ const playgroundConfig = defineConfig({
           canvas: {value: {base: '#fafafb', _osDark: '#242731'}},
           chip: {value: {base: '#eceff1', _osDark: '#343844'}},
           callout: {value: {base: '#edf2ff', _osDark: '#252f4a'}},
-          note: {value: {base: '#f5f5f7', _osDark: '#2c2f3a'}},
           accentBg: {value: {base: '#eff6ff', _osDark: '#1e3a5f'}},
           border: {value: {base: '#e2e8f0', _osDark: '#424754'}},
 

@@ -139,7 +139,7 @@ describe('Compression Playground', () => {
     expect(screen.getByRole('heading', {level: 3, name: 'Reading the results'})).toBeInTheDocument();
     expect(screen.getByText(/What the charts say/)).toBeInTheDocument();
     expect(screen.getByText(/Train an OpenZL compressor/)).toBeInTheDocument();
-    expect(screen.getByText('Get large files? Use the desktop app.')).toBeInTheDocument();
+    expect(screen.queryByText(/desktop app/i)).not.toBeInTheDocument();
   });
 
   it('waits for profiles before running and preserves the training request', async () => {
@@ -207,7 +207,7 @@ describe('on a browser that cannot load the module', () => {
     // Every iOS browser is WebKit, so naming Chrome there would only send an
     // iPhone user back to this screen.
     expect(screen.getByText(/except on iPhone and iPad, where every browser uses Safari.s engine/)).toBeInTheDocument();
-    expect(screen.getByText(/OpenZL Playground desktop app/)).toBeInTheDocument();
+    expect(screen.queryByText(/desktop app/i)).not.toBeInTheDocument();
   });
 
   it('replaces the setup and results columns rather than sitting alongside them', () => {
@@ -256,7 +256,6 @@ describe('on a page that is not cross-origin isolated', () => {
     renderWithPlaygroundTheme(<App />);
 
     expect(await screen.findByText(/Try reloading the page, or opening it in a normal window/)).toBeInTheDocument();
-    expect(screen.getByText(/OpenZL Playground desktop app works either way/)).toBeInTheDocument();
     expect(screen.queryByText(/Chrome 133\+/)).not.toBeInTheDocument();
     expect(document.querySelector('a[href*="caniuse.com"]')).toBeNull();
   });
