@@ -51,9 +51,11 @@
   "build": {
     "appId": "org.openzl.compression-playground",
     "productName": "OpenZL Compression Playground",
+    "icon": "electron/icon.png",
     "files": [
       "dist/**/*",
       "electron/*.cjs",
+      "electron/icon.png",
       "!electron/after-pack.cjs",
       "package.json",
       "!node_modules/**/*"
