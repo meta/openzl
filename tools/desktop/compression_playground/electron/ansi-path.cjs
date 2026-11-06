@@ -11,13 +11,13 @@ const iconv = require('iconv-lite');
 const UTF8 = 65001;
 
 /**
- * On Windows `zli` reads its arguments in the ANSI code page, not as UTF-16 or
- * UTF-8, so a path with a character outside that code page reaches it mangled
- * (or best-fit mapped to a different file). These are the characters of
- * `text` that `codePage` cannot encode, by the Windows tables iconv-lite ships.
- * Empty for UTF-8, which encodes everything, and for a code page iconv-lite
- * does not know: refusing what might work would be worse than letting zli
- * report its own error.
+ * On Windows `zli` and `zstd-benchmark` read their arguments in the ANSI code
+ * page, not as UTF-16 or UTF-8, so a path with a character outside that code
+ * page reaches them mangled (or best-fit mapped to a different file). These
+ * are the characters of `text` that `codePage` cannot encode, by the Windows
+ * tables iconv-lite ships. Empty for UTF-8, which encodes everything, and for
+ * a code page iconv-lite does not know: refusing what might work would be
+ * worse than letting the tool report its own error.
  *
  * @param {string} text
  * @param {number} codePage
@@ -45,7 +45,7 @@ function unrepresentableCharacters(text, codePage) {
  * @param {string} fix
  * @param {number} codePage
  */
-function assertReadableByZli(text, what, fix, codePage) {
+function assertReadableByNativeTools(text, what, fix, codePage) {
   const bad = unrepresentableCharacters(text, codePage);
   if (bad.length === 0) {
     return;
@@ -55,7 +55,7 @@ function assertReadableByZli(text, what, fix, codePage) {
     .map((character) => `"${character}"`)
     .join(', ');
   throw new Error(
-    `${what} contains ${shown}${bad.length > 3 ? ' and more' : ''}, which this PC's ANSI code page (${codePage}) cannot represent, and the OpenZL command-line tool reads paths in that code page. ${fix}`,
+    `${what} contains ${shown}${bad.length > 3 ? ' and more' : ''}, which this PC's ANSI code page (${codePage}) cannot represent, and the native benchmark tools (zli, zstd-benchmark) read paths in that code page. ${fix}`,
   );
 }
 
@@ -112,7 +112,7 @@ function windowsAnsiCodePage() {
 }
 
 module.exports = {
-  assertReadableByZli,
+  assertReadableByNativeTools,
   parseCodePage,
   unrepresentableCharacters,
   windowsAnsiCodePage,
