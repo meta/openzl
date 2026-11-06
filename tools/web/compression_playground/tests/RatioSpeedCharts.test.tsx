@@ -49,6 +49,7 @@ function result(
       level: 1,
       iterations: 1,
       profile: 'serial',
+      profileArg: '',
       training: null,
       ...job,
     } as BenchmarkJob,

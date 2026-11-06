@@ -9,6 +9,7 @@ function openZLRow(overrides: Record<string, unknown> = {}) {
     compressor: 'OpenZL',
     levels: [6],
     profile: 'serial',
+    profileArg: '',
     training: {paretoFrontier: true, candidates: 10},
     ...overrides,
   };
@@ -94,16 +95,32 @@ describe('validateRequest', () => {
     rejects(request({compressors: [{rowId: 1, compressor: 'zstd', levels: [2.5]}]}), 'Invalid zstd levels');
   });
 
+  it('passes a profile argument through, of any length', () => {
+    const long = request({compressors: [openZLRow({profileArg: 'x'.repeat(10_000)})]});
+    expect(validateRequest(long)).toEqual(long);
+  });
+
+  it('accepts the bundled sample as input, leaving its path to the main process', () => {
+    const sample = {kind: 'bundled-sample', name: 'sra0.bin', size: 2071976};
+    expect(validateRequest(request({input: sample})).input).toEqual(sample);
+    // Whatever else it carries, a request for the sample is not one for a path.
+    expect(validateRequest(request({input: {...sample, path: 'examples/sra0.bin'}})).input).toEqual(sample);
+  });
+
   it('rejects invalid OpenZL options', () => {
     rejects(request({compressors: [openZLRow({profile: ''})]}), 'OpenZL profile is missing');
+    rejects(request({compressors: [openZLRow({profileArg: undefined})]}), 'OpenZL profile argument is invalid');
     for (const training of [undefined, true, {candidates: 10}, {paretoFrontier: true, candidates: 0}]) {
       rejects(request({compressors: [openZLRow({training})]}), 'OpenZL training options are invalid');
     }
   });
 
   it('rejects missing or malformed input', () => {
-    rejects(request({input: null}), 'Benchmark input is missing');
-    for (const path of ['', 'sample\0.bin', 42, undefined]) {
+    const NOT_INPUT = 'Benchmark input must be a file path or the bundled sample';
+    for (const input of [null, {}, {path: 42}, {data: [1]}, {kind: 'other-sample', name: 'x', size: 1}]) {
+      rejects(request({input}), NOT_INPUT);
+    }
+    for (const path of ['', 'sample\0.bin']) {
       rejects(request({input: {path}}), 'Invalid input path');
     }
   });

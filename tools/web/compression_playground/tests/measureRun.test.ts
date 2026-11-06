@@ -44,3 +44,17 @@ describe('measureRun when the OpenZL module will not load', () => {
     expect(messages.at(-1)?.type).toBe('finished');
   });
 });
+
+describe('measureRun with the bundled sample', () => {
+  it('refuses it, since only the desktop app ships the file', async () => {
+    const {measureRun} = await import('../src/measureRun.ts');
+    const {BUNDLED_SAMPLE} = await import('../src/sample.ts');
+
+    await expect(
+      measureRun(
+        {input: BUNDLED_SAMPLE, compressors: [toCompressorConfig(createCompressorRow(1, 'gzip'))], iterations: 1},
+        vi.fn(),
+      ),
+    ).rejects.toThrow('The bundled sample is only available in the desktop app');
+  });
+});

@@ -102,6 +102,10 @@ async function* measure(job: BenchmarkJob, data: Uint8Array, openzl: OpenZL | nu
 
 export async function measureRun(config: RunConfig, post: Emit): Promise<void> {
   post({type: 'loading'});
+  if ('kind' in config.input) {
+    // Only the desktop app offers it, and the desktop app runs `zli` instead.
+    throw new Error('The bundled sample is only available in the desktop app');
+  }
   const data = new Uint8Array(await config.input.arrayBuffer());
   // Awaited here so the cost is paid once, but a failure is carried into the
   // loop rather than thrown out of the run: zstd and gzip need nothing from

@@ -43,3 +43,42 @@ export function profileDescription(profile: OpenZlProfile): string {
   const sentence = description.endsWith('.') ? description : `${description}.`;
   return `${sentence} ${reason}`;
 }
+
+/** A profile as `zli list-profiles` describes it. */
+export interface ListedProfile {
+  readonly name: string;
+  readonly description: string;
+}
+
+/**
+ * Why the desktop app cannot run a profile, read off the CLI's description of
+ * it, or undefined if it can. The app cannot pick a description file to pass
+ * as `--profile-arg` yet, and the CLI marks unfinished profiles as placeholders.
+ */
+function desktopUnsupportedReason(description: string): string | undefined {
+  if (/\bPass a path to\b/i.test(description)) {
+    return 'Cannot run in the desktop app yet: needs a description file, which this app cannot pick.';
+  }
+  if (/\(Placeholder\)/i.test(description)) {
+    return 'Cannot run in the desktop app yet: the CLI lists it as a placeholder.';
+  }
+  return undefined;
+}
+
+/**
+ * The desktop app's profiles, from its `zli list-profiles`, in the form
+ * `setWasmProfiles` takes. The desktop app runs `zli` instead of the WASM
+ * build, so `isWasmSupported` here means the app can run the profile.
+ */
+export function desktopProfileMetadata(listed: readonly ListedProfile[]): readonly ProfileMetadata[] {
+  return listed.map(({name, description}) => {
+    const reason = desktopUnsupportedReason(description);
+    return {
+      name,
+      description,
+      isWasmSupported: reason === undefined,
+      ...(reason === undefined ? {} : {wasmUnsupportedReason: reason}),
+      isTrainable: !/\bTraining is not supported\b/i.test(description),
+    };
+  });
+}

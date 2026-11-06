@@ -37,8 +37,8 @@ async function runAll(payload) {
   return results;
 }
 
-function openZLRow(profile, training) {
-  return {rowId: 1, compressor: 'OpenZL', levels: [1], profile, training};
+function openZLRow(profile, training, profileArg = '') {
+  return {rowId: 1, compressor: 'OpenZL', levels: [1], profile, profileArg, training};
 }
 
 async function main() {
@@ -90,6 +90,19 @@ async function main() {
       untrained.some((result) => result.candidate !== null || result.srcSize !== SAMPLE_SIZE)
     ) {
       throw new Error('Native untrained benchmark returned an invalid result');
+    }
+
+    // The csv profile, told by --profile-arg that the separator is not a comma.
+    const csvPath = path.join(temporaryDirectory, 'semicolons.csv');
+    const csv = Array.from({length: 2000}, (_, row) => `${row};${row * 7};name${row % 13}\n`).join('');
+    fs.writeFileSync(csvPath, `id;value;name\n${csv}`);
+    const separated = await runAll({
+      zliPath,
+      zstdBenchmarkPath,
+      config: {input: {path: csvPath}, iterations: 1, compressors: [openZLRow('csv', null, ';')]},
+    });
+    if (separated.length !== 1 || separated[0].srcSize !== fs.statSync(csvPath).size) {
+      throw new Error('Native csv benchmark with a profile argument returned an invalid result');
     }
 
     let zliFailure;

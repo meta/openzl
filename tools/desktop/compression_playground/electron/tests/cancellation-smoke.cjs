@@ -80,6 +80,7 @@ async function harness(scenario, sample) {
         compressor: 'OpenZL',
         levels: [1],
         profile: 'serial',
+        profileArg: '',
         training: {paretoFrontier: true, candidates: 10},
       },
     ],

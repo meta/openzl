@@ -4,12 +4,15 @@
 
 'use strict';
 
-/** @import {Candidate, OpenZlBenchmarkJob} from '../../../web/compression_playground/src/benchmarkTypes.ts' */
+/**
+ * @import {Candidate, OpenZlBenchmarkJob} from '../../../web/compression_playground/src/benchmarkTypes.ts'
+ * @import {ListedProfile} from '../../../web/compression_playground/src/wasmProfiles.ts'
+ */
 
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const {spawn} = require('node:child_process');
+const {execFile, spawn} = require('node:child_process');
 const {z} = require('zod');
 const {assertReadableByNativeTools, windowsAnsiCodePage} = require('./ansi-path.cjs');
 
@@ -303,6 +306,20 @@ async function benchmark(zliPath, inputPath, compressorArgs, job, csvPath, conte
 }
 
 /**
+ * The arguments that choose a job's profile.
+ *
+ * @param {OpenZlBenchmarkJob} job
+ */
+function profileArguments(job) {
+  const args = ['--profile', job.profile];
+  // An empty --profile-arg is not the same as none: csv rejects it as a separator.
+  if (job.profileArg !== '') {
+    args.push('--profile-arg', job.profileArg);
+  }
+  return args;
+}
+
+/**
  * @param {string} zliPath
  * @param {string} inputPath
  * @param {OpenZlBenchmarkJob} job
@@ -316,8 +333,7 @@ async function trainedCandidatePaths(zliPath, inputPath, job, candidates, output
     [
       'train',
       inputPath,
-      '--profile',
-      job.profile,
+      ...profileArguments(job),
       '--output',
       outputDirectory,
       '--pareto-frontier',
@@ -417,7 +433,7 @@ async function* measureOpenZL(
   try {
     if (job.training === null) {
       const csvPath = path.join(workDirectory, 'benchmark.csv');
-      const args = ['--profile', job.profile];
+      const args = profileArguments(job);
       yield {candidate: null, measurement: await benchmark(zliPath, input, args, job, csvPath, context)};
       return;
     }
@@ -481,4 +497,50 @@ async function measureZstd(
   }
 }
 
-module.exports = {checkInputPath, measureOpenZL, measureZstd, progressFraction};
+// `zli list-profiles` prints one profile per line: `  -| serial  = Serial data (aka raw bytes)`.
+const PROFILE_LINE = /^\s*-\|\s*(\S+)\s*=\s*(.*?)\s*$/;
+
+/**
+ * Every profile and its description, as `zli list-profiles` prints them.
+ *
+ * @param {string} stdout
+ * @returns {ListedProfile[]}
+ */
+function parseProfiles(stdout) {
+  return stdout.split(/\r?\n/).flatMap((line) => {
+    const match = PROFILE_LINE.exec(line);
+    return match === null ? [] : [{name: match[1] ?? '', description: match[2] ?? ''}];
+  });
+}
+
+/**
+ * The profiles this zli offers, from `zli list-profiles`, so the page lists
+ * what the CLI actually has rather than a copy that can fall behind it. zli
+ * prints the list through its logger, on stderr, so both streams are read.
+ *
+ * @param {string} zliPath
+ * @param {{timeoutMs?: number}} [options]
+ * @returns {Promise<ListedProfile[]>}
+ */
+function listProfiles(zliPath, {timeoutMs = 30_000} = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(zliPath, ['list-profiles'], {windowsHide: true, timeout: timeoutMs}, (error, stdout, stderr) => {
+      if (error !== null) {
+        // A timeout kills zli, so its stderr would not say why it stopped.
+        const message = error.killed
+          ? `zli list-profiles did not finish within ${timeoutMs / 1000} s`
+          : stderr.trim() || `zli list-profiles failed: ${error.message}`;
+        reject(new Error(message, {cause: error}));
+        return;
+      }
+      const profiles = parseProfiles(`${stdout}\n${stderr}`);
+      if (profiles.length === 0) {
+        reject(new Error('zli list-profiles listed no profiles'));
+        return;
+      }
+      resolve(profiles);
+    });
+  });
+}
+
+module.exports = {checkInputPath, listProfiles, measureOpenZL, measureZstd, progressFraction};

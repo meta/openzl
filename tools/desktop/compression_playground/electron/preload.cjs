@@ -53,5 +53,6 @@ contextBridge.exposeInMainWorld(
   Object.freeze({
     startBenchmark,
     getPathForFile: (/** @type {File} */ file) => webUtils.getPathForFile(file),
+    listProfiles: () => ipcRenderer.invoke('openzl:list-profiles'),
   }),
 );

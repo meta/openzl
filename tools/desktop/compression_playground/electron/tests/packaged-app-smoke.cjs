@@ -5,7 +5,8 @@
 'use strict';
 
 // Run with Node after `desktop:pack`: launches the packaged app and checks the
-// fuses, the app:// renderer, and a real benchmark through the bundled zli.
+// fuses, the app:// renderer, a real benchmark through the bundled zli, and
+// one of the sample the app carries.
 
 const assert = require('node:assert/strict');
 const {spawn} = require('node:child_process');
@@ -15,6 +16,9 @@ const os = require('node:os');
 const path = require('node:path');
 
 const RELEASE = path.resolve(__dirname, '..', '..', 'release');
+// As the page names it, without the path, which only the main process uses.
+const {name, size} = require('../../../../web/compression_playground/src/bundledSample.json');
+const BUNDLED_SAMPLE = {kind: 'bundled-sample', name, size};
 const PRODUCT = 'OpenZL Compression Playground';
 const TIMEOUT_MS = 60_000;
 const EVALUATE_TIMEOUT_MS = 5 * 60_000;
@@ -191,12 +195,20 @@ async function main() {
             input: {path: ${JSON.stringify(sample)}},
             iterations: 1,
             compressors: [
-              {rowId: 1, compressor: 'OpenZL', levels: [1], profile: 'serial', training: null},
+              {rowId: 1, compressor: 'OpenZL', levels: [1], profile: 'serial', profileArg: '', training: null},
               {rowId: 2, compressor: 'zstd', levels: [3]},
             ],
           }, (message) => messages.push(message)).done;
           const results = messages.filter((message) => message.type === 'result');
+          // The page names the sample; the main process finds it in the app's resources.
+          const sampleSizes = [];
+          await window.openzlDesktop.startBenchmark({
+            input: ${JSON.stringify(BUNDLED_SAMPLE)},
+            iterations: 1,
+            compressors: [{rowId: 1, compressor: 'zstd', levels: [1]}],
+          }, (message) => message.type === 'result' && sampleSizes.push(message.result.srcSize)).done;
           return {
+            sampleSizes,
             origin: location.origin,
             events: messages.map((message) => message.type + (message.result ? ' ' + message.result.job.id : '')),
             srcSizes: results.map((message) => message.result.srcSize),
@@ -208,6 +220,7 @@ async function main() {
       // Neither row trains: one result per job, in order, between the browser's
       // start and finish messages.
       assert.deepEqual(page, {
+        sampleSizes: [BUNDLED_SAMPLE.size],
         origin: 'app://bundle',
         events: ['loading', 'started', 'result 1-OpenZL-1', 'result 2-zstd-3', 'finished'],
         srcSizes: [size, size],

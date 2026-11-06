@@ -4,23 +4,11 @@ import {useRef, useState} from 'react';
 import {Box, IconButton, Input, Text, VStack} from '@chakra-ui/react';
 import {LuCloudUpload, LuX} from 'react-icons/lu';
 import StepCard from './StepCard.tsx';
-
-const FILE_SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
-
-/** Decimal units, not binary ones: a 5,000,000-byte file reads back as 5 MB rather than 4.8. */
-function formatFileSize(bytes: number): string {
-  let size = bytes;
-  let unit = 0;
-  while (size >= 1000 && unit < FILE_SIZE_UNITS.length - 1) {
-    size /= 1000;
-    unit += 1;
-  }
-  const rounded = unit === 0 || size >= 10 ? Math.round(size) : Math.round(size * 10) / 10;
-  return `${rounded} ${FILE_SIZE_UNITS[unit]}`;
-}
+import type {RunInput} from '../benchmarkTypes.ts';
+import {formatFileSize} from '../fileSize.ts';
 
 interface UploadCardProps {
-  file: File | null;
+  file: RunInput | null;
   onFileChange: (file: File | null) => void;
   /** Set while a run is in flight, so the file cannot change under it. */
   disabled?: boolean;

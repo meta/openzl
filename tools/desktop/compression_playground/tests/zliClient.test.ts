@@ -7,7 +7,7 @@ import fsPromises from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {checkInputPath, measureOpenZL, measureZstd, type ZliChildEvent} from '../electron/zli-client.cjs';
+import {checkInputPath, listProfiles, measureOpenZL, measureZstd, type ZliChildEvent} from '../electron/zli-client.cjs';
 import {
   csvZli,
   FAKE_ZSTD_BENCHMARK,
@@ -27,6 +27,7 @@ afterEach(() => {
   delete process.env.FAKE_ZLI_PATH_COLUMN;
   delete process.env.FAKE_ZLI_FAIL;
   delete process.env.FAKE_ZLI_INPUTS;
+  delete process.env.FAKE_ZLI_ARGS;
   removeFakeZlis();
 });
 
@@ -91,6 +92,33 @@ describe('measureOpenZL', () => {
 
     // One training run, then four candidate benchmarks, all of the same file.
     expect(readFileSync(inputs, 'utf8').trim().split('\n')).toEqual(Array(5).fill(inputPath));
+  });
+
+  it('passes --profile-arg to training and to an untrained benchmark only when the job has one', async () => {
+    const inputPath = inputFile();
+    const argsFile = join(dirname(inputPath), 'args.txt');
+    process.env.FAKE_ZLI_ARGS = argsFile;
+    const profileArgs = () => {
+      const calls = readFileSync(argsFile, 'utf8').trim().split('\n');
+      rmSync(argsFile);
+      return calls.map((line) => {
+        const args = JSON.parse(line) as string[];
+        const at = args.indexOf('--profile-arg');
+        return [args[0], at === -1 ? null : args[at + 1]];
+      });
+    };
+    const job = {...openZLJob(), profile: 'csv'};
+
+    await collect(measureOpenZL(fakeZli(), inputPath, {...job, profileArg: ';'}));
+    expect(profileArgs()).toEqual([['benchmark', ';']]);
+    await collect(measureOpenZL(fakeZli(), inputPath, {...job, profileArg: ';', training: TRAINED}));
+    // The trained candidate carries its profile with it.
+    expect(profileArgs()).toEqual([
+      ['train', ';'],
+      ['benchmark', null],
+    ]);
+    await collect(measureOpenZL(fakeZli(), inputPath, job));
+    expect(profileArgs()).toEqual([['benchmark', null]]);
   });
 
   it('reports why zli failed even when its scratch directory cannot be removed', async () => {
@@ -324,6 +352,35 @@ describe('measureZstd', () => {
 
     await expect(measureZstd(malformed, inputFile(), {level: 3, iterations: 1})).rejects.toThrow(
       'zstd-benchmark returned an unexpected result (srcSize:',
+    );
+  });
+});
+
+describe('listProfiles', () => {
+  it('lists every profile zli prints, with its description, from either stream', async () => {
+    const zli = fakeZli(`
+process.stdout.write('Available profiles:\\n  -| serial  = Serial data (aka raw bytes)\\n');
+process.stderr.write('  -| csv = CSV, with a separator given by --profile-arg\\r\\n');
+`);
+
+    await expect(listProfiles(zli)).resolves.toEqual([
+      {name: 'serial', description: 'Serial data (aka raw bytes)'},
+      {name: 'csv', description: 'CSV, with a separator given by --profile-arg'},
+    ]);
+  });
+
+  it("fails with zli's own message when it fails, or when it lists nothing", async () => {
+    await expect(listProfiles(fakeZli("process.stderr.write('No such command\\n'); process.exit(1);"))).rejects.toThrow(
+      'No such command',
+    );
+    await expect(listProfiles(fakeZli("process.stdout.write('Available profiles:\\n');"))).rejects.toThrow(
+      'zli list-profiles listed no profiles',
+    );
+  });
+
+  it('gives up on a zli that does not finish', async () => {
+    await expect(listProfiles(fakeZli('setInterval(() => {}, 1000);'), {timeoutMs: 200})).rejects.toThrow(
+      'zli list-profiles did not finish within 0.2 s',
     );
   });
 });

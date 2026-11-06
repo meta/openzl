@@ -11,7 +11,8 @@ import type {OpenZlBenchmarkJob, TrainingConfig} from '../../../web/compression_
  * contents become its compressedSize. A benchmark writes zli's CSV header and
  * one row whose quoted path contains a comma, and fails if its --compressor
  * path does not exist or is the one FAKE_ZLI_FAIL names. Each call's input
- * path is appended to FAKE_ZLI_INPUTS when it is set.
+ * path is appended to FAKE_ZLI_INPUTS, and its arguments, as a JSON line, to
+ * FAKE_ZLI_ARGS, when they are set.
  */
 function fakeZliScript(candidateIndices: number[]): string {
   return `
@@ -25,6 +26,9 @@ const pathColumn = process.env.FAKE_ZLI_PATH_COLUMN !== '0';
 const flag = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 if (process.env.FAKE_ZLI_INPUTS !== undefined) {
   fs.appendFileSync(process.env.FAKE_ZLI_INPUTS, args[1] + '\\n');
+}
+if (process.env.FAKE_ZLI_ARGS !== undefined) {
+  fs.appendFileSync(process.env.FAKE_ZLI_ARGS, JSON.stringify(args) + '\\n');
 }
 if (args[0] === 'train') {
   // As zli does at --verbose 3 on a pipe: INFO lines and one line per redraw.
@@ -104,7 +108,16 @@ require('node:fs').writeFileSync(args[args.indexOf('--output-csv') + 1], ${JSON.
 
 /** An OpenZL job at level 6 and 4 iterations, untrained unless `training` says otherwise. */
 export function openZLJob(training: TrainingConfig | null = null): OpenZlBenchmarkJob {
-  return {id: '1-OpenZL-6', rowId: 1, level: 6, iterations: 4, compressor: 'OpenZL', profile: 'serial', training};
+  return {
+    id: '1-OpenZL-6',
+    rowId: 1,
+    level: 6,
+    iterations: 4,
+    compressor: 'OpenZL',
+    profile: 'serial',
+    profileArg: '',
+    training,
+  };
 }
 
 const directories: string[] = [];

@@ -7,6 +7,7 @@ import {
   Button,
   Checkbox,
   IconButton,
+  Input,
   NativeSelect,
   Popover,
   Portal,
@@ -31,19 +32,20 @@ import {
   OPENZL_DEFAULT_LEVEL,
   OPENZL_LEVELS,
   getOpenZlProfiles,
+  DESKTOP_TRAINED_CANDIDATE_COUNTS,
   TRAINED_CANDIDATE_COUNTS,
   isTrainableProfile,
   levelsFor,
   tickLabelLeft,
   type CompressorName,
   type CompressorRow,
-  type OpenZlProfile,
   type GzipRow,
+  type OpenZlProfile,
   type OpenZlRow,
   type ZstdRow,
 } from '../compressors.ts';
 import type {CompressorRows, PatchRow} from '../useCompressorRows.ts';
-import {isBrowserSupportedProfile, profileDescription} from '../wasmProfiles.ts';
+import {getOpenZlProfileDescriptions, isBrowserSupportedProfile, profileDescription} from '../wasmProfiles.ts';
 
 interface CompressorRowProps {
   row: CompressorRow;
@@ -53,12 +55,14 @@ interface CompressorRowProps {
   onPatch: PatchRow;
   onCompressorChange: (id: number, compressor: CompressorName) => void;
   onRemove: (id: number) => void;
+  desktop: boolean;
 }
 
 interface OpenZlRowProps {
   row: OpenZlRow;
   position: number;
   onPatch: PatchRow;
+  desktop: boolean;
 }
 
 interface ConfigureRunCardProps {
@@ -66,14 +70,30 @@ interface ConfigureRunCardProps {
   compressors: CompressorRows;
   iterations: number;
   onIterationsChange: (iterations: number) => void;
+  /** The desktop app, which runs the CLI's profiles and can pass `--profile-arg`. */
+  desktop?: boolean;
+  /** Where the profiles come from: the WASM worker unless the desktop app supplies its own. */
+  loadProfiles?: () => Promise<unknown>;
 }
 
-function OpenZlOptions({row, position, onPatch}: OpenZlRowProps) {
+/**
+ * Whether the desktop app should offer a `--profile-arg` field for a profile:
+ * the CLI's description says when a profile takes one. Profiles whose argument
+ * is a file path are not runnable yet, so they never get this far.
+ */
+function takesProfileArgument(profile: string): boolean {
+  return (
+    isBrowserSupportedProfile(profile) && (getOpenZlProfileDescriptions()[profile] ?? '').includes('--profile-arg')
+  );
+}
+
+function OpenZlOptions({row, position, onPatch, desktop}: OpenZlRowProps) {
   const helperTooltip = useSlotRecipe({key: 'helperTooltip'})();
   // A backstop for rows that arrive from elsewhere: the picker already refuses
   // pytorch, which the browser cannot run at all.
   const canTrain = isTrainableProfile(row.profile);
   const isTraining = row.trainRequested && canTrain;
+  const candidateCounts = desktop ? DESKTOP_TRAINED_CANDIDATE_COUNTS : TRAINED_CANDIDATE_COUNTS;
   return (
     <Box borderRadius="6px" overflow="hidden">
       <chakra.button
@@ -182,7 +202,7 @@ function OpenZlOptions({row, position, onPatch}: OpenZlRowProps) {
                     borderRadius="6px"
                     value={row.candidates}
                     onChange={(event) => onPatch(row.id, row.compressor, {candidates: Number(event.target.value)})}>
-                    {TRAINED_CANDIDATE_COUNTS.map((count) => (
+                    {candidateCounts.map((count) => (
                       <option key={count} value={count}>
                         {count}
                       </option>
@@ -192,6 +212,24 @@ function OpenZlOptions({row, position, onPatch}: OpenZlRowProps) {
                 </NativeSelect.Root>
               </Box>
             </Box>
+
+            {desktop && takesProfileArgument(row.profile) && (
+              <Box display="flex" gap="8px" alignItems="center">
+                <Text color="pg.faint" fontSize="11px" fontWeight="semibold" flexShrink={0} m={0}>
+                  PROFILE ARGUMENT
+                </Text>
+                <Input
+                  aria-label={`Profile argument for row ${position}`}
+                  value={row.profileArg}
+                  onChange={(event) => onPatch(row.id, row.compressor, {profileArg: event.target.value})}
+                  height="32px"
+                  fontSize="12px"
+                  bg="pg.surface"
+                  borderColor="pg.border"
+                  placeholder="separator (optional)"
+                />
+              </Box>
+            )}
 
             <Box
               display="flex"
@@ -223,11 +261,11 @@ function OpenZlOptions({row, position, onPatch}: OpenZlRowProps) {
  * Ids for the tool tip text description. Scoped per row because ids must be unique
  * and every row renders its own listbox.
  */
-function profileDescriptionId(rowId: number, profile: OpenZlProfile): string {
+function profileDescriptionId(rowId: number, profile: string): string {
   return `row-${rowId}-profile-${profile}-description`;
 }
 
-function ProfileSelect({row, position, onPatch}: OpenZlRowProps) {
+function ProfileSelect({row, position, onPatch, desktop}: OpenZlRowProps) {
   const helperTooltip = useSlotRecipe({key: 'helperTooltip'})();
   const triggerId = `row-${row.id}-profile-trigger`;
   const profiles = getOpenZlProfiles();
@@ -273,7 +311,8 @@ function ProfileSelect({row, position, onPatch}: OpenZlRowProps) {
         if (next != null) {
           // buildJobs checks training capability, preserve trainRequested so
           // switching back to a trainable profile restores the user's setting.
-          onPatch(row.id, row.compressor, {profile: next as OpenZlProfile});
+          // The argument belongs to the profile it was typed for.
+          onPatch(row.id, row.compressor, {profile: next, profileArg: ''});
         }
       }}>
       <Select.Label srOnly>Profile for row {position}</Select.Label>
@@ -321,7 +360,7 @@ function ProfileSelect({row, position, onPatch}: OpenZlRowProps) {
                   fontSize="11px"
                   fontWeight="semibold"
                   textTransform="uppercase">
-                  Not available in the browser
+                  {desktop ? 'Not available in the desktop app' : 'Not available in the browser'}
                 </Box>
               )}
               <Select.Item
@@ -509,6 +548,7 @@ function CompressorRowCard({
   onPatch,
   onCompressorChange,
   onRemove,
+  desktop,
 }: CompressorRowProps) {
   const helperTooltip = useSlotRecipe({key: 'helperTooltip'})();
   const triggerId = `row-${row.id}-compressor`;
@@ -614,7 +654,7 @@ function CompressorRowCard({
             {row.compressor === 'OpenZL' ? 'PROFILE' : 'LEVEL'}
           </Text>
           {row.compressor === 'OpenZL' ? (
-            <ProfileSelect row={row} position={position} onPatch={onPatch} />
+            <ProfileSelect row={row} position={position} onPatch={onPatch} desktop={desktop} />
           ) : (
             <LevelsPicker row={row} position={position} onPatch={onPatch} />
           )}
@@ -640,7 +680,9 @@ function CompressorRowCard({
         </Text>
       )}
 
-      {row.compressor === 'OpenZL' && <OpenZlOptions row={row} position={position} onPatch={onPatch} />}
+      {row.compressor === 'OpenZL' && (
+        <OpenZlOptions row={row} position={position} onPatch={onPatch} desktop={desktop} />
+      )}
     </Box>
   );
 }
@@ -650,11 +692,13 @@ export default function ConfigureRunCard({
   iterations,
   onIterationsChange,
   onProfilesReady,
+  desktop = false,
+  loadProfiles = getBenchmarkProfiles,
 }: ConfigureRunCardProps) {
   const [profileStatus, setProfileStatus] = useState<'loading' | 'ready' | Error>('loading');
   useEffect(() => {
     let active = true;
-    getBenchmarkProfiles()
+    loadProfiles()
       .then(() => {
         if (active) {
           setProfileStatus('ready');
@@ -667,7 +711,7 @@ export default function ConfigureRunCard({
     return () => {
       active = false;
     };
-  }, [onProfilesReady]);
+  }, [loadProfiles, onProfilesReady]);
   return (
     <StepCard number={2} title="Configure the run" subtitle="Select which compressors to compare">
       <VStack gap="10px" align="stretch" aria-busy={profileStatus === 'loading'}>
@@ -684,6 +728,7 @@ export default function ConfigureRunCard({
             onPatch={patchRow}
             onCompressorChange={changeCompressor}
             onRemove={removeRow}
+            desktop={desktop}
           />
         ))}
       </VStack>
