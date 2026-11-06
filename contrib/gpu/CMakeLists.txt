@@ -35,6 +35,23 @@ add_executable(bench_decode_bf16
 )
 target_link_libraries(bench_decode_bf16 PRIVATE openzl_gpu)
 
+# The Nimble frame benchmark makes its frames with testkit, which links the
+# OpenZL test support library. That library exists only when tests are on.
+if (OPENZL_BUILD_BENCHMARKS AND TARGET openzl_test_support AND TARGET arg)
+    find_package(Threads REQUIRED)
+    file(GLOB testkit_library_sources CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_LIST_DIR}/testkit/*.cpp")
+    add_executable(bench_nimble_frames
+        src/decompress/bench/bench_nimble_frames.cpp
+        ${testkit_library_sources}
+    )
+    target_link_libraries(bench_nimble_frames
+        PRIVATE openzl_gpu openzl openzl_cpp openzl_test_support arg
+            Threads::Threads
+    )
+    apply_openzl_compile_options_to_target(bench_nimble_frames)
+endif()
+
 if (OPENZL_BUILD_TESTS)
     set(gpu_test_sources ${gpu_all_sources})
     list(FILTER gpu_test_sources INCLUDE REGEX "/tests/")
