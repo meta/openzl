@@ -3,7 +3,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import {describe, it, expect, afterEach, vi} from 'vitest';
-import {render, screen, cleanup, fireEvent, type RenderOptions} from '@testing-library/react';
+import {render, screen, cleanup, fireEvent, within, type RenderOptions} from '@testing-library/react';
 import {ChakraProvider} from '@chakra-ui/react';
 import React from 'react';
 import RunBenchmarkCard from '../src/components/RunBenchmarkCard.tsx';
@@ -160,7 +160,7 @@ describe('RunBenchmarkCard', () => {
       expect(screen.getByRole('button', {name: /run benchmark/i})).toBeInTheDocument();
     });
 
-    it('says what it is doing while the module loads', () => {
+    it('says it is loading, whether that is the module or the sample', () => {
       renderWithPlaygroundTheme(
         <RunBenchmarkCard
           runConfig={null}
@@ -170,7 +170,7 @@ describe('RunBenchmarkCard', () => {
           runBlockers={[]}
         />,
       );
-      expect(screen.getByText(/Loading the OpenZL module/)).toBeInTheDocument();
+      expect(screen.getByText(/Preparing for benchmarks/)).toBeInTheDocument();
       expect(barPercent()).toBe(0);
     });
   });
@@ -181,13 +181,13 @@ describe('RunBenchmarkCard', () => {
     );
 
     expect(screen.getByRole('button', {name: 'Run benchmark'})).toBeDisabled();
-    expect(screen.getByRole('button', {name: 'Try a 5 MB sample'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Try a sample'})).toBeDisabled();
   });
 
   it('passes the current configuration to the run handler', () => {
     const config: RunConfig = {
       input: new File(['data'], 'data.bin'),
-      compressors: [{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', training: null}],
+      compressors: [{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', profileArg: '', training: null}],
       iterations: 5,
     };
     const onRun = vi.fn();
@@ -203,7 +203,7 @@ describe('RunBenchmarkCard', () => {
     );
 
     fireEvent.click(screen.getByRole('button', {name: 'Run benchmark'}));
-    fireEvent.click(screen.getByRole('button', {name: 'Try a 5 MB sample'}));
+    fireEvent.click(screen.getByRole('button', {name: 'Try a sample'}));
 
     expect(onRun).toHaveBeenCalledWith(config);
     expect(onTrySample).toHaveBeenCalledOnce();
@@ -212,7 +212,7 @@ describe('RunBenchmarkCard', () => {
   it('disables actions while a run is loading', () => {
     const config: RunConfig = {
       input: new File(['data'], 'data.bin'),
-      compressors: [{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', training: null}],
+      compressors: [{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', profileArg: '', training: null}],
       iterations: 5,
     };
     renderWithPlaygroundTheme(
@@ -227,7 +227,7 @@ describe('RunBenchmarkCard', () => {
 
     // Loading is already part of the run, so the button is the running one.
     expect(screen.getByRole('button', {name: 'Running…'})).toBeDisabled();
-    expect(screen.getByRole('button', {name: 'Try a 5 MB sample'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Try a sample'})).toBeDisabled();
   });
 
   it('says what to fix while Run is unavailable, on focus and to a screen reader', async () => {
@@ -254,6 +254,23 @@ describe('RunBenchmarkCard', () => {
     expect(run).toHaveAccessibleDescription(reason);
     fireEvent.focus(run);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(reason);
+  });
+
+  it('says what the sample is on focus and to a screen reader, and links to where it comes from', async () => {
+    renderWithPlaygroundTheme(
+      <RunBenchmarkCard runConfig={null} runState={idleState} onRun={null} onTrySample={vi.fn()} runBlockers={[]} />,
+    );
+    const sample = screen.getByRole('button', {name: 'Try a sample'});
+    const description = 'The SAO star catalog, part of the Silesia compression corpus';
+
+    expect(sample).toHaveAccessibleDescription(description);
+    fireEvent.focus(sample);
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip).toHaveTextContent(description);
+    expect(within(tooltip).getByRole('link', {name: 'Silesia compression corpus'})).toHaveAttribute(
+      'href',
+      'https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia',
+    );
   });
 
   it('says nothing about blockers while a run is in flight', () => {

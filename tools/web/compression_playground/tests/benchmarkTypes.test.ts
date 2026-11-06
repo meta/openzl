@@ -2,7 +2,7 @@
 
 import {describe, expect, it} from 'vitest';
 import {buildJobs, isRunInProgress, toCompressorConfig, type RunConfig, type RunState} from '../src/benchmarkTypes.ts';
-import {createCompressorRow} from '../src/compressors.ts';
+import {createCompressorRow, DEFAULT_TRAINED_CANDIDATES} from '../src/compressors.ts';
 
 const FILE = new File(['x'], 'sample.bin');
 const runWith = (compressors: RunConfig['compressors'], iterations = 5): RunConfig => ({
@@ -25,6 +25,7 @@ describe('toCompressorConfig', () => {
       compressor: 'OpenZL',
       levels: [6],
       profile: 'serial',
+      profileArg: '',
       training: {paretoFrontier: true, candidates: 7},
     });
   });
@@ -35,7 +36,7 @@ describe('toCompressorConfig', () => {
     row.trainRequested = true;
 
     const config = toCompressorConfig(row);
-    expect(config).toMatchObject({training: {paretoFrontier: true, candidates: 6}});
+    expect(config).toMatchObject({training: {paretoFrontier: true, candidates: DEFAULT_TRAINED_CANDIDATES}});
     expect(buildJobs(runWith([config])).jobs).toEqual([
       expect.objectContaining({profile: 'fixed_profile', training: null}),
     ]);
@@ -88,14 +89,16 @@ describe('buildJobs', () => {
   it('carries profile names unchanged into jobs', () => {
     const {
       jobs: [job],
-    } = buildJobs(runWith([{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'le-u32', training: null}]));
+    } = buildJobs(
+      runWith([{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'le-u32', profileArg: '', training: null}]),
+    );
     expect(job).toMatchObject({compressor: 'OpenZL', profile: 'le-u32', level: 6});
   });
 
   it('reports OpenZL profiles the browser cannot build instead of skipping them', () => {
     const {jobs, rejected} = buildJobs(
       runWith([
-        {rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'parquet', training: null},
+        {rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'parquet', profileArg: '', training: null},
         {rowId: 2, compressor: 'gzip', levels: [6]},
       ]),
     );
@@ -120,7 +123,7 @@ describe('buildJobs', () => {
 
   it('rejects a row once however many levels it would have expanded into', () => {
     const {jobs, rejected} = buildJobs(
-      runWith([{rowId: 1, compressor: 'OpenZL', levels: [1, 6, 9], profile: 'csv', training: null}]),
+      runWith([{rowId: 1, compressor: 'OpenZL', levels: [1, 6, 9], profile: 'csv', profileArg: '', training: null}]),
     );
 
     expect(jobs).toEqual([]);
@@ -135,6 +138,7 @@ describe('buildJobs', () => {
           compressor: 'OpenZL',
           levels: [1, 6],
           profile: 'serial',
+          profileArg: '',
           training: {paretoFrontier: true, candidates: 12},
         },
       ]),

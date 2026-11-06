@@ -36,6 +36,7 @@ function result(job: Partial<BenchmarkJob> & Pick<BenchmarkJob, 'compressor'>, m
       level: 1,
       iterations: 1,
       profile: 'serial',
+      profileArg: '',
       training: null,
       ...job,
     } as BenchmarkJob,
@@ -239,6 +240,13 @@ describe('ResultsPanel', () => {
     );
     expect(screen.queryByText('No results yet')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', {name: 'How it works'})).not.toBeInTheDocument();
+  });
+
+  it('does not say the speeds are WebAssembly ones in the desktop app, which measures natively', () => {
+    renderWithPlaygroundTheme(<ResultsPanel runState={completed(TWO_ZSTD_LEVELS)} desktop />);
+
+    expect(screen.getByRole('table', {name: 'Measurements'})).toBeInTheDocument();
+    expect(screen.queryByText(/WebAssembly/)).not.toBeInTheDocument();
   });
 
   it('keeps the empty state when every job failed, and says which', () => {

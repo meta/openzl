@@ -14,6 +14,7 @@ const HOW_IT_WORKS_STEPS = ['Choose your data.', 'Pick compressors to compare.',
 
 interface ResultsPanelProps {
   runState: RunState;
+  desktop?: boolean;
 }
 
 function Pill({children, bg, color}: {children: string; bg: string; color: string}) {
@@ -63,7 +64,7 @@ function FailureList({runState}: ResultsPanelProps) {
   );
 }
 
-export default function ResultsPanel({runState}: ResultsPanelProps) {
+export default function ResultsPanel({runState, desktop = false}: ResultsPanelProps) {
   const results = resultsOf(runState);
   const hasResults = results.length > 0;
   const isRunning = isRunInProgress(runState);
@@ -132,7 +133,8 @@ export default function ResultsPanel({runState}: ResultsPanelProps) {
         />
         <FailureList runState={runState} />
 
-        {hasResults && (
+        {/* Only true of the browser build: the desktop app measures with native zli. */}
+        {hasResults && !desktop && (
           <Box
             as="aside"
             aria-label="WebAssembly speed notice"
@@ -176,7 +178,7 @@ export default function ResultsPanel({runState}: ResultsPanelProps) {
                   No results yet
                 </Text>
                 <Text color="pg.secondary" fontSize="14px" lineHeight="1.4" m={0}>
-                  Select your data to compress or hit &ldquo;Try a 5 MB sample&rdquo; to see the playground work.
+                  Select your data to compress or hit &ldquo;Try a sample&rdquo; to see the playground work.
                 </Text>
               </VStack>
             </Box>

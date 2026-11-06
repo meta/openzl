@@ -37,7 +37,7 @@ describe('UploadCard', () => {
     // Scoped to the drop zone: the live region repeats the name and size.
     const dropzone = within(screen.getByTestId('upload-dropzone'));
     expect(dropzone.getByText('sample.bin')).toBeInTheDocument();
-    // Decimal units, so this stays consistent with the "Try a 5 MB sample" copy.
+    // Decimal units.
     expect(dropzone.getByText(/5 MB/)).toBeInTheDocument();
     expect(dropzone.getByText('Choose another file')).toBeInTheDocument();
   });
@@ -111,6 +111,20 @@ describe('UploadCard', () => {
 
     leaveTowards(document.body);
     expect(dropzone).not.toHaveAttribute('data-dragging');
+  });
+
+  it('takes no file while disabled, by the picker, a drop or the remove button', () => {
+    const onFileChange = vi.fn();
+    renderWithPlaygroundTheme(<UploadCard file={textFile('data.bin', 1)} onFileChange={onFileChange} disabled />);
+
+    expect(screen.getByLabelText(/Choose another file/)).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Remove data.bin'})).toBeDisabled();
+
+    const dropzone = screen.getByTestId('upload-dropzone');
+    fireEvent.dragEnter(dropzone);
+    expect(dropzone).not.toHaveAttribute('data-dragging');
+    fireEvent.drop(dropzone, {dataTransfer: {files: [textFile('dropped.bin', 9)]}});
+    expect(onFileChange).not.toHaveBeenCalled();
   });
 
   it('reports removal through onFileChange', () => {

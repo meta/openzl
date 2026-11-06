@@ -3,6 +3,7 @@
 import {describe, expect, it} from 'vitest';
 import {getOpenZlProfiles} from '../src/compressors.ts';
 import {
+  desktopProfileMetadata,
   isBrowserSupportedProfile,
   isTrainableProfile,
   profileDescription,
@@ -65,5 +66,46 @@ describe('profileDescription', () => {
 
   it('leaves a usable profile to its own help text', () => {
     expect(profileDescription('serial')).toBe('Serial data (aka raw bytes)');
+  });
+});
+
+describe('desktopProfileMetadata', () => {
+  const listed = [
+    {name: 'serial', description: 'Serial data (aka raw bytes)'},
+    // A profile added to the CLI after this page was written.
+    {name: 'brand-new', description: 'Some format the CLI learned yesterday'},
+    {name: 'pytorch', description: 'Pytorch model generated from torch.save(). Training is not supported.'},
+    {name: 'sddl3', description: 'Pass a path to the description file with --profile-arg.'},
+    {name: 'future-ml', description: 'Numeric data using a learned selector (Placeholder)'},
+  ];
+
+  it('runs every profile zli lists but the ones the app cannot supply an input for', () => {
+    expect(desktopProfileMetadata(listed).map(({name, isWasmSupported}) => [name, isWasmSupported])).toEqual([
+      ['serial', true],
+      ['brand-new', true],
+      ['pytorch', true],
+      ['sddl3', false],
+      ['future-ml', false],
+    ]);
+  });
+
+  it('reads trainability off the CLI’s own description', () => {
+    const trainable = Object.fromEntries(
+      desktopProfileMetadata(listed).map(({name, isTrainable}) => [name, isTrainable]),
+    );
+    expect(trainable).toMatchObject({serial: true, 'brand-new': true, pytorch: false});
+  });
+
+  it('explains the ones it cannot run in desktop terms', () => {
+    setWasmProfiles(desktopProfileMetadata(listed));
+    try {
+      expect(profileDescription('sddl3')).toMatch(/Cannot run in the desktop app yet: needs a description file/);
+      expect(profileDescription('future-ml')).toMatch(
+        /Cannot run in the desktop app yet: the CLI lists it as a placeholder/,
+      );
+      expect(profileDescription('brand-new')).toBe('Some format the CLI learned yesterday');
+    } finally {
+      setWasmProfiles(TEST_PROFILES);
+    }
   });
 });
