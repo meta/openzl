@@ -7,10 +7,7 @@ import StepCard from './StepCard.tsx';
 
 const FILE_SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
 
-/**
- * Decimal units, not binary ones: the sample button next to this card promises
- * "5 MB", and a 5,000,000-byte file has to read back as 5 MB rather than 4.8.
- */
+/** Decimal units, not binary ones: a 5,000,000-byte file reads back as 5 MB rather than 4.8. */
 function formatFileSize(bytes: number): string {
   let size = bytes;
   let unit = 0;
@@ -25,9 +22,11 @@ function formatFileSize(bytes: number): string {
 interface UploadCardProps {
   file: File | null;
   onFileChange: (file: File | null) => void;
+  /** Set while a run is in flight, so the file cannot change under it. */
+  disabled?: boolean;
 }
 
-export default function UploadCard({file, onFileChange}: UploadCardProps) {
+export default function UploadCard({file, onFileChange, disabled = false}: UploadCardProps) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -62,16 +61,19 @@ export default function UploadCard({file, onFileChange}: UploadCardProps) {
         borderColor={isDragging ? 'pg.accent' : 'pg.border'}
         borderRadius="8px"
         pr={file ? '12px' : '0'}
+        opacity={disabled ? 0.6 : 1}
         transition="background-color 120ms ease, border-color 120ms ease"
-        _hover={{borderColor: 'pg.accent'}}
+        _hover={disabled ? undefined : {borderColor: 'pg.accent'}}
         _focusWithin={{outline: '2px solid', outlineColor: 'pg.accent', outlineOffset: '2px'}}
+        // A disabled card still takes the drag events, only to refuse the file:
+        // leaving them unhandled would let the browser navigate to it instead.
         onDragEnter={(event) => {
           event.preventDefault();
-          setIsDragging(true);
+          setIsDragging(!disabled);
         }}
         onDragOver={(event) => {
           event.preventDefault();
-          event.dataTransfer.dropEffect = 'copy';
+          event.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
         }}
         onDragLeave={(event) => {
           // Moving onto a child fires dragleave on this element too; only clear
@@ -83,6 +85,9 @@ export default function UploadCard({file, onFileChange}: UploadCardProps) {
         onDrop={(event) => {
           event.preventDefault();
           setIsDragging(false);
+          if (disabled) {
+            return;
+          }
           // Chrome hands over a dropped directory as a zero-byte File, so the
           // entry API is the only way to tell it from a genuinely empty file.
           const entry = event.dataTransfer.items?.[0]?.webkitGetAsEntry?.();
@@ -94,10 +99,18 @@ export default function UploadCard({file, onFileChange}: UploadCardProps) {
             selectFile(dropped);
           }
         }}>
-        <VStack as="label" flex="1" minW={0} gap="8px" px="16px" py="32px" cursor="pointer">
+        <VStack
+          as="label"
+          flex="1"
+          minW={0}
+          gap="8px"
+          px="16px"
+          py="32px"
+          cursor={disabled ? 'not-allowed' : 'pointer'}>
           <Input
             ref={inputRef}
             type="file"
+            disabled={disabled}
             srOnly
             onChange={(event) => {
               onFileChange(event.target.files?.[0] ?? null);
@@ -143,6 +156,7 @@ export default function UploadCard({file, onFileChange}: UploadCardProps) {
             size="xs"
             flexShrink={0}
             color="pg.muted"
+            disabled={disabled}
             _hover={{color: 'pg.accent'}}
             onClick={() => selectFile(null)}>
             <LuX />
