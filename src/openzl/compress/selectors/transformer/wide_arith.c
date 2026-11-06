@@ -152,18 +152,6 @@ TRS_WideU128 TRS_wide_u128_from_u64(uint64_t x)
     return out;
 }
 
-TRS_WideU128 TRS_wide_u128_add_u64(TRS_WideU128 acc, uint64_t x)
-{
-#if TRS_WIDE_HAVE_INT128
-    return wide_u128_from_builtin(wide_u128_to_builtin(acc) + (__uint128_t)x);
-#else
-    TRS_WideU128 out = acc;
-    out.lo += x;
-    out.hi += (out.lo < acc.lo) ? 1ULL : 0ULL;
-    return out;
-#endif
-}
-
 TRS_WideU128 TRS_wide_u128_mul_u64(uint64_t lhs, uint64_t rhs)
 {
 #if TRS_WIDE_HAVE_INT128

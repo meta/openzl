@@ -7,6 +7,7 @@
 #include "numeric_extract.h"
 #include "cardinality.h"
 #include "numeric_fixed_point.h"
+#include "numeric_kmv.h"
 #include "numeric_stats.h"
 #include "wide_arith.h"
 
@@ -211,7 +212,7 @@ static TRS_NumericFeaturesV2 NumericFeaturesV2_extract_num64(
     if (data[0] != 0) {
         min_lb0 = (uint64_t)ZL_ctz64(data[0]);
     }
-    TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, data[0]);
+    TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, data[0]);
 
     for (size_t i = 1; i < n_elements; i++) {
         uint64_t val_u            = data[i];
@@ -291,7 +292,7 @@ static TRS_NumericFeaturesV2 NumericFeaturesV2_extract_num64(
             }
         }
 
-        TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, val_u);
+        TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, val_u);
         prev_u = val_u;
         prev_s = val_s;
     }
@@ -387,7 +388,7 @@ TRS_NumericFeaturesV2 TRS_numericFeaturesV2_extract_num64_decision(
     if (data[0] != 0) {
         min_lb0 = (uint64_t)ZL_ctz64(data[0]);
     }
-    TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, data[0]);
+    TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, data[0]);
 
     for (size_t i = 1; i < n_elements; i++) {
         uint64_t val_u = data[i];
@@ -425,7 +426,7 @@ TRS_NumericFeaturesV2 TRS_numericFeaturesV2_extract_num64_decision(
             }
         }
 
-        TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, val_u);
+        TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, val_u);
         prev_u = val_u;
     }
 
@@ -521,7 +522,7 @@ static TRS_NumericFeatures NumericFeatures_extract_sub64(
                sizeof(*seen_u16) * TRS_CARDINALITY_U16_BITMAP_WORDS);
         seen_bitmap_set(seen_u16, TRS_CARDINALITY_U16_BITMAP_WORDS, data[0]);
     }
-    TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, (uint64_t)data[0]);
+    TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, (uint64_t)data[0]);
 
     for (size_t i = 1; i < n_elements; i++) {
         uint64_t val_u = (uint64_t)data[i];
@@ -600,7 +601,7 @@ static TRS_NumericFeatures NumericFeatures_extract_sub64(
             current_run_length = 1;
         }
 
-        TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, val_u);
+        TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, val_u);
         prev_u = val_u;
         prev_s = val_s;
     }
@@ -682,22 +683,23 @@ static TRS_NumericFeatures NumericFeatures_extract_sub64_decision(
         return f;
     ZL_ASSERT_NN(data);
 
-    uint64_t min_u               = (uint64_t)data[0];
-    uint64_t max_u               = min_u;
-    int64_t min_s                = to_signed((uint64_t)data[0], elt_width);
-    int64_t max_s                = min_s;
-    TRS_WideU128 sum_abs_delta_u = TRS_wide_u128_from_u64(0);
-    size_t zero_count            = (data[0] == 0) ? 1 : 0;
-    size_t delta_up_count        = 0;
-    size_t delta_down_count      = 0;
-    int64_t delta_min_s          = 0;
-    int64_t delta_max_s          = 0;
-    int64_t delta_first_min_s    = INT64_MAX;
-    int64_t delta_first_max_s    = INT64_MIN;
-    uint64_t min_lb0             = 64;
-    size_t nonzero_count         = (data[0] != 0) ? 1 : 0;
-    uint64_t prev_u              = (uint64_t)data[0];
-    int64_t prev_s               = min_s;
+    uint64_t min_u = (uint64_t)data[0];
+    uint64_t max_u = min_u;
+    int64_t min_s  = to_signed((uint64_t)data[0], elt_width);
+    int64_t max_s  = min_s;
+    /* At most UINT32_MAX differences, each bounded by UINT32_MAX. */
+    uint64_t sum_abs_delta_u  = 0;
+    size_t zero_count         = (data[0] == 0) ? 1 : 0;
+    size_t delta_up_count     = 0;
+    size_t delta_down_count   = 0;
+    int64_t delta_min_s       = 0;
+    int64_t delta_max_s       = 0;
+    int64_t delta_first_min_s = INT64_MAX;
+    int64_t delta_first_max_s = INT64_MIN;
+    uint64_t min_lb0          = 64;
+    size_t nonzero_count      = (data[0] != 0) ? 1 : 0;
+    uint64_t prev_u           = (uint64_t)data[0];
+    int64_t prev_s            = min_s;
     ZL_ASSERT(has_kmv_workspace(workspace));
     ZL_ASSERT(
             elt_width != 2
@@ -717,7 +719,7 @@ static TRS_NumericFeatures NumericFeatures_extract_sub64_decision(
                sizeof(*seen_u16) * TRS_CARDINALITY_U16_BITMAP_WORDS);
         seen_bitmap_set(seen_u16, TRS_CARDINALITY_U16_BITMAP_WORDS, data[0]);
     }
-    TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, (uint64_t)data[0]);
+    TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, (uint64_t)data[0]);
 
     for (size_t i = 1; i < n_elements; i++) {
         uint64_t val_u  = (uint64_t)data[i];
@@ -771,8 +773,8 @@ static TRS_NumericFeatures NumericFeatures_extract_sub64_decision(
         }
 
         uint64_t abs_delta_u = TRS_numeric_abs_diff_u64(val_u, prev_u);
-        sum_abs_delta_u = TRS_wide_u128_add_u64(sum_abs_delta_u, abs_delta_u);
-        TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, val_u);
+        sum_abs_delta_u += abs_delta_u;
+        TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, val_u);
         prev_u = val_u;
         prev_s = val_s;
     }
@@ -803,7 +805,7 @@ static TRS_NumericFeatures NumericFeatures_extract_sub64_decision(
             f.delta_down_ratio_fp =
                     (delta_down_count * TRS_NUMERIC_Q32_SCALE) / n_transitions;
             f.mean_abs_delta_u_fp = TRS_wide_u128_scaled_div_to_u64(
-                    sum_abs_delta_u, n_transitions);
+                    TRS_wide_u128_from_u64(sum_abs_delta_u), n_transitions);
         }
     }
 
@@ -862,7 +864,7 @@ static TRS_NumericFeatures NumericFeatures_extract_num64(
     if (data[0] != 0) {
         min_lb0 = (uint64_t)ZL_ctz64(data[0]);
     }
-    TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, data[0]);
+    TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, data[0]);
 
     for (size_t i = 1; i < n_elements; i++) {
         uint64_t val_u = data[i];
@@ -932,7 +934,7 @@ static TRS_NumericFeatures NumericFeatures_extract_num64(
             current_run_length = 1;
         }
 
-        TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, val_u);
+        TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, val_u);
         prev_u = val_u;
         prev_s = val_s;
     }
@@ -1104,7 +1106,7 @@ static TRS_NumericFeatures NumericFeatures_extract_num8_from_bytes(
         min_lb0 = (uint64_t)ZL_ctz32((uint32_t)data[0]);
     }
     seen_bitmap_set(seen_values, TRS_CARDINALITY_U8_BITMAP_WORDS, data[0]);
-    TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, (uint64_t)data[0]);
+    TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, (uint64_t)data[0]);
 
     for (size_t i = 1; i < n_bytes; i++) {
         uint64_t val_u = (uint64_t)data[i];
@@ -1184,7 +1186,7 @@ static TRS_NumericFeatures NumericFeatures_extract_num8_from_bytes(
             current_run_length = 1;
         }
 
-        TRS_numeric_kmv_track_value(kmv_heap, &kmv_n, val_u);
+        TRS_numeric_kmv_track_inline(kmv_heap, &kmv_n, val_u);
         prev_u = val_u;
         prev_s = val_s;
     }
