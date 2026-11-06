@@ -1,17 +1,30 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-import {useCallback, useEffect, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Box, Flex} from '@chakra-ui/react';
-import {ToolHeader} from '@openzl/web-common';
+import {OPENZL_NAVIGATION, ToolHeader} from '@openzl/web-common';
 import ResultsPanel from './components/ResultsPanel.tsx';
 import SetupColumn from './components/SetupColumn.tsx';
 import UnsupportedBrowser from './components/UnsupportedBrowser.tsx';
-import {toCompressorConfig, type CompressorConfig, type RunConfig, type RunState} from './benchmarkTypes.ts';
+import {
+  toCompressorConfig,
+  type CompressorConfig,
+  type RunConfig,
+  type RunInput,
+  type RunState,
+} from './benchmarkTypes.ts';
 import {ITERATIONS_DEFAULT} from './compressors.ts';
+import {desktopBridge, loadDesktopProfiles, type OpenZLDesktopBridge} from './desktop.ts';
 import {detectEngineSupport, engineBlocker, isolationSettled} from './engineSupport.ts';
+import {fetchSample} from './fetchSample.ts';
 import {runBenchmark} from './runBenchmark.ts';
+import {runDesktopBenchmark} from './runDesktopBenchmark.ts';
+import {BUNDLED_SAMPLE} from './sample.ts';
 import {useCompressorRows} from './useCompressorRows.ts';
 import logoUrl from '/OpenZL_logo.png?url';
+
+/** Where the header's site links point in the desktop app, served from app://. */
+const OPENZL_SITE = 'https://openzl.org/';
 
 /**
  * The Figma frame the two columns sit in (node 151:2), with its own padding.
@@ -65,28 +78,34 @@ function describeRows(positions: readonly number[]): string {
 }
 
 /**
- * Why Run is unavailable, if it is. A zstd or gzip row with no levels would
- * drop out of the run with nothing on the page to say so, so Run waits until
- * it has one.
+ * What in the compressor rows keeps a run from starting. A zstd or gzip row
+ * with no levels would drop out of the run with nothing on the page to say so,
+ * so a run waits until it has one.
  */
-function runBlockersFor(file: File | null, compressors: readonly CompressorConfig[]): string[] {
-  const blockers: string[] = [];
-  if (file === null) {
-    blockers.push('Choose a file in step 1 to run the benchmark.');
-  }
+function configBlockersFor(compressors: readonly CompressorConfig[]): string[] {
   const emptyRows = compressors.flatMap((config, index) => (config.levels.length === 0 ? [index + 1] : []));
-  if (emptyRows.length > 0) {
-    blockers.push(`Pick at least one level for ${describeRows(emptyRows)}.`);
-  }
-  return blockers;
+  return emptyRows.length > 0 ? [`Pick at least one level for ${describeRows(emptyRows)}.`] : [];
+}
+
+/** Why Run is unavailable, if it is. */
+function runBlockersFor(file: RunInput | null, compressors: readonly CompressorConfig[]): string[] {
+  const fileBlockers = file === null ? ['Choose a file in step 1 to run the benchmark.'] : [];
+  return [...fileBlockers, ...configBlockersFor(compressors)];
 }
 
 export default function App() {
+  // The desktop app measures with `zli` instead of the WASM worker. Both feed
+  // the same `RunState`, so nothing past `onRun` knows which one ran.
+  const bridge = desktopBridge();
+  const desktop = bridge !== undefined;
   // Lazy initializer rather than a call in the body: nothing detection reports
   // can change while the page is open, so it should run once per mount rather
   // than once per render.
   const [support] = useState(detectEngineSupport);
-  const blocker = engineBlocker(support);
+  // None of the engine gates apply to the desktop app, which never loads the
+  // module. They would fail there anyway: app:// cannot host the isolation
+  // worker, so `threads` always reads false.
+  const blocker = desktop ? null : engineBlocker(support);
   const [settled, setSettled] = useState(false);
   useEffect(() => {
     void isolationSettled().then(() => {
@@ -101,12 +120,23 @@ export default function App() {
 
   return (
     <Flex direction="column" minH="100vh" bg="pg.pageBg">
-      <ToolHeader title="Compression Playground" logoSrc={logoUrl} />
+      <ToolHeader
+        title="Compression Playground"
+        logoSrc={logoUrl}
+        {...(desktop
+          ? {
+              // The page is served from app://, where the header's relative
+              // links point nowhere.
+              homeHref: OPENZL_SITE,
+              navigation: OPENZL_NAVIGATION.map(({label, href}) => ({label, href: new URL(href, OPENZL_SITE).href})),
+            }
+          : {})}
+      />
       {/* The header stays up on the unsupported path. It is the site
           navigation, and it is the only way off this screen. */}
       <Flex as="main" flex="1" direction="column" align="center" bg="pg.pageBg">
         {awaitingIsolation ? null : blocker === null ? (
-          <Playground />
+          <Playground bridge={bridge} />
         ) : (
           <Box width="100%" maxW={MESSAGE_MAX_WIDTH} px="32px" pt={{base: '32px', md: '96px'}} pb="40px">
             <UnsupportedBrowser blocker={blocker} />
@@ -118,15 +148,30 @@ export default function App() {
 }
 
 /** Owns the run setup, so none of it exists on the blocked path, where nothing could use it. */
-function Playground() {
-  const [file, setFile] = useState<File | null>(null);
-  const compressors = useCompressorRows();
+function Playground({bridge}: {bridge: OpenZLDesktopBridge | undefined}) {
+  const [file, setFile] = useState<RunInput | null>(null);
+  const desktop = bridge !== undefined;
+  const compressors = useCompressorRows({desktop});
+  // The desktop app asks its `zli`, so it never starts the WASM worker.
+  const loadProfiles = useMemo(() => (bridge === undefined ? undefined : () => loadDesktopProfiles(bridge)), [bridge]);
+  // The desktop app installs the sample, so there is nothing to download: the
+  // backend opens it by name. The browser fetches it.
+  const loadSample: () => Promise<RunInput> =
+    bridge === undefined ? fetchSample : () => Promise.resolve(BUNDLED_SAMPLE);
   const [iterations, setIterations] = useState(ITERATIONS_DEFAULT);
   const [runState, setRunState] = useState<RunState>({status: 'idle'});
-  const onRun = useCallback((config: RunConfig) => {
-    runBenchmark(config, setRunState);
-  }, []);
+  const onRun = useCallback(
+    (config: RunConfig) => {
+      if (bridge === undefined) {
+        runBenchmark(config, setRunState);
+      } else {
+        runDesktopBenchmark(config, bridge, setRunState);
+      }
+    },
+    [bridge],
+  );
   const compressorConfigs = compressors.rows.map(toCompressorConfig);
+  const configBlockers = configBlockersFor(compressorConfigs);
   const runBlockers = runBlockersFor(file, compressorConfigs);
   const runConfig: RunConfig | null =
     file === null || runBlockers.length > 0
@@ -135,6 +180,40 @@ function Playground() {
           input: file,
           compressors: compressorConfigs,
           iterations,
+        };
+  // The rows and iterations as last rendered. They stay editable while the
+  // sample loads, so the run reads them when it starts, not at the press.
+  const liveSetup = useRef({compressors: compressorConfigs, iterations});
+  useEffect(() => {
+    liveSetup.current = {compressors: compressorConfigs, iterations};
+  });
+  // The sample stands in for the file, so it runs even with none chosen -- but
+  // not with a row Run would refuse.
+  const onTrySample =
+    configBlockers.length > 0
+      ? null
+      : () => {
+          // `loading` from the press rather than from when the run starts, so
+          // both buttons and the file picker stay disabled while the sample
+          // loads, and nothing can be chosen over it.
+          setRunState({status: 'loading'});
+          loadSample().then(
+            (sample) => {
+              setFile(sample);
+              // A row emptied during the load holds the run back, as it
+              // would Run, which then says why and runs the sample once fixed.
+              const setup = liveSetup.current;
+              if (configBlockersFor(setup.compressors).length > 0) {
+                setRunState({status: 'idle'});
+                return;
+              }
+              onRun({input: sample, ...setup});
+            },
+            (error: unknown) => {
+              const message = error instanceof Error ? error.message : String(error);
+              setRunState({status: 'error', message, results: [], failures: []});
+            },
+          );
         };
   useBlockStrayFileDrops();
 
@@ -157,10 +236,12 @@ function Playground() {
         runConfig={runConfig}
         runState={runState}
         onRun={onRun}
-        onTrySample={null}
+        onTrySample={onTrySample}
         runBlockers={runBlockers}
+        desktop={desktop}
+        loadProfiles={loadProfiles}
       />
-      <ResultsPanel runState={runState} />
+      <ResultsPanel runState={runState} desktop={desktop} />
     </Flex>
   );
 }

@@ -74,6 +74,7 @@ describe.skipIf(!hasModule)('measureRun with training', () => {
             compressor: 'OpenZL',
             levels: [6],
             profile: 'le-u32',
+            profileArg: '',
             training: {paretoFrontier: true, candidates: 6, maxTimeSecs: 3},
           },
         ],

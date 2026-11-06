@@ -1,0 +1,89 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+
+# The compression playground's Electron desktop app, set up and tested on Linux,
+# macOS and Windows the same way a developer would: `yarn install`, `yarn
+# setup`, `yarn test`. That is the typecheck, lint and unit tests of the app and
+# of the web playground it shows, then the smoke tests: native zli and
+# zstd-benchmark, the window's security settings, cancellation, and the
+# packaged app. Anything a platform needs belongs in setup.cjs or the test
+# scripts, not here.
+
+name: desktop-playground
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'tools/web/compression_playground/**'
+      - 'contrib/desktop_compression_playground/**'
+      - 'tools/web/package.json'
+      - 'tools/web/yarn.lock'
+      # The renderer's shared components and the workspace's build config.
+      - 'tools/web/web_common/**'
+      - 'tools/web/tsconfig*.json'
+      - 'tools/web/vite.base.ts'
+      - 'tools/web/eslint.config.js'
+      - 'tools/web/.prettierrc'
+      # The app drives zli: its arguments, its CSV and the candidates
+      # `zli train` writes are the interface the desktop backend reads.
+      - 'cli/**'
+      - 'tools/training/**'
+      # The sample the app bundles, which the smoke test trains on.
+      - 'examples/getting_started/sample_inputs/sra0.bin'
+      - '.github/workflows/desktop-playground-ci.yml'
+  pull_request:
+    branches: [dev, master, actionsTest]
+    paths:
+      - 'tools/web/compression_playground/**'
+      - 'contrib/desktop_compression_playground/**'
+      - 'tools/web/package.json'
+      - 'tools/web/yarn.lock'
+      # The renderer's shared components and the workspace's build config.
+      - 'tools/web/web_common/**'
+      - 'tools/web/tsconfig*.json'
+      - 'tools/web/vite.base.ts'
+      - 'tools/web/eslint.config.js'
+      - 'tools/web/.prettierrc'
+      - 'cli/**'
+      - 'tools/training/**'
+      - 'examples/getting_started/sample_inputs/sra0.bin'
+      - '.github/workflows/desktop-playground-ci.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Desktop app (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Training the bundled sample dominates: about 7 minutes on a devserver
+    # with 4 training threads, longer on a hosted runner.
+    timeout-minutes: 90
+    # On every platform the app ships for: paths, line endings and process
+    # handling differ, and only running there shows it.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2025]
+    defaults:
+      run:
+        shell: bash
+        working-directory: contrib/desktop_compression_playground
+    steps:
+      # Windows checks files out with CRLF line endings, which Prettier rejects.
+      - run: git config --global core.autocrlf false
+        working-directory: .
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'yarn'
+          cache-dependency-path: |
+            tools/web/yarn.lock
+            contrib/desktop_compression_playground/yarn.lock
+      # Nothing here builds or downloads the WASM module, so a desktop renderer
+      # that still needed it would fail to build.
+      - run: yarn install --frozen-lockfile
+      - run: yarn setup
+      - run: yarn test

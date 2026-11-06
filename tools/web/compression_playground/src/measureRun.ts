@@ -102,6 +102,10 @@ async function* measure(job: BenchmarkJob, data: Uint8Array, openzl: OpenZL | nu
 
 export async function measureRun(config: RunConfig, post: Emit): Promise<void> {
   post({type: 'loading'});
+  if ('kind' in config.input) {
+    // Only the desktop app offers it, and the desktop app runs `zli` instead.
+    throw new Error('The bundled sample is only available in the desktop app');
+  }
   const data = new Uint8Array(await config.input.arrayBuffer());
   // Awaited here so the cost is paid once, but a failure is carried into the
   // loop rather than thrown out of the run: zstd and gzip need nothing from
@@ -142,7 +146,7 @@ export async function measureRun(config: RunConfig, post: Emit): Promise<void> {
  * happened to be running. Compression is bandwidth-bound, so this is not a
  * small effect, and the numbers stop being reproducible.
  *
- * What it costs is bounded: on the 5 MB sample the twelve level jobs come to
+ * What it costs is bounded: on a 5 MB input the twelve level jobs come to
  * about 11 seconds in total, against minutes for one training job, which is
  * not something running them side by side would help with.
  */
