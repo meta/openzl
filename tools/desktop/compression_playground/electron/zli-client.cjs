@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
 const {z} = require('zod');
-const {assertReadableByZli, windowsAnsiCodePage} = require('./ansi-path.cjs');
+const {assertReadableByNativeTools, windowsAnsiCodePage} = require('./ansi-path.cjs');
 
 const TRAINING_THREADS = Math.min(4, Math.max(1, os.availableParallelism()));
 const csvCount = z.string().trim().regex(/^\d+$/, 'expected a whole number').transform(Number);
@@ -60,8 +60,13 @@ const KILL_GRACE_MS = 2000;
  * @property {(event: ZliChildEvent) => void} [onChild]
  */
 
+/** @param {string} executable */
+function executableName(executable) {
+  return path.basename(executable).replace(/\.exe$/i, '');
+}
+
 /**
- * SIGTERM first, then SIGKILL if zli has not exited. Windows terminates on either.
+ * SIGTERM first, then SIGKILL if the child has not exited. Windows terminates on either.
  *
  * @param {import('node:child_process').ChildProcess} child
  */
@@ -120,31 +125,29 @@ function failureFromVerboseStderr(stderr, killed) {
 }
 
 /**
- * Runs zli, which reports failures on stderr. With `onProgress`, zli runs at
- * --verbose 3: each progress line is reported as a fraction, and only the
- * fatal error is kept as the failure message.
+ * Runs a native benchmark binary, which reports failures on stderr. With
+ * `onProgress`, stderr is zli's at --verbose 3: each progress line is reported
+ * as a fraction, and only the fatal error is kept as the failure message.
  *
- * @param {string} zliPath
+ * @param {string} executable
  * @param {string[]} args
  * @param {ZliContext & {onProgress?: (fraction: number) => void}} context
  * @returns {Promise<void>}
  */
-function runZli(zliPath, args, {signal, onChild, onProgress}) {
+function runNative(executable, args, {signal, onChild, onProgress}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason);
       return;
     }
-    // --verbose 1 limits stderr to errors, so a failure message can be shown
-    // as-is; 3 adds the progress lines `onProgress` reads.
-    const child = spawn(zliPath, [...args, '--verbose', onProgress === undefined ? '1' : '3'], {
+    const child = spawn(executable, args, {
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
     });
     child.stderr.setEncoding('utf8');
     let stderr = '';
     /**
-     * Why zli was stopped; reported once it has actually exited.
+     * Why the child was stopped; reported once it has actually exited.
      *
      * @type {unknown}
      */
@@ -216,7 +219,7 @@ function runZli(zliPath, args, {signal, onChild, onProgress}) {
           new Error(
             detail !== ''
               ? detail
-              : `zli exited unexpectedly (${exitSignal === null ? `code ${code}` : `signal ${exitSignal}`})`,
+              : `${executableName(executable)} exited unexpectedly (${exitSignal === null ? `code ${code}` : `signal ${exitSignal}`})`,
           ),
         );
         return;
@@ -228,26 +231,40 @@ function runZli(zliPath, args, {signal, onChild, onProgress}) {
 }
 
 /**
- * Reads the single row zli benchmark --output-csv writes for one input file.
- * A value that is not the number it should be fails naming its column.
+ * Runs zli. --verbose 1 limits its stderr to errors, so a failure message can
+ * be shown as-is; 3 adds the progress lines `onProgress` reads.
+ *
+ * @param {string} zliPath
+ * @param {string[]} args
+ * @param {ZliContext & {onProgress?: (fraction: number) => void}} context
+ */
+function runZli(zliPath, args, context) {
+  return runNative(zliPath, [...args, '--verbose', context.onProgress === undefined ? '1' : '3'], context);
+}
+
+/**
+ * Reads the single row zli benchmark --output-csv writes for one input file;
+ * zstd-benchmark writes the same columns. A value that is not the number it
+ * should be fails naming its column, and the binary that wrote it.
  *
  * @param {string} csvPath
+ * @param {string} binary
  * @returns {Promise<ZliMeasurement>}
  */
-async function readBenchmarkCsv(csvPath) {
+async function readBenchmarkCsv(csvPath, binary) {
   const [header = '', row = ''] = (await fs.readFile(csvPath, 'utf8')).split(/\r?\n/);
   const values = row.split(',');
   const names = header.split(',').map((name) => name.trim());
   // Read by name, so a repeated column would silently replace the first.
   const repeated = names.find((name, index) => names.indexOf(name) !== index);
   if (repeated !== undefined) {
-    throw new Error(`zli returned an unexpected result (column ${repeated} appears twice)`);
+    throw new Error(`${binary} returned an unexpected result (column ${repeated} appears twice)`);
   }
   const parsed = benchmarkRowSchema.safeParse(Object.fromEntries(names.map((name, index) => [name, values[index]])));
   if (!parsed.success) {
     const [issue] = parsed.error.issues;
     const field = issue !== undefined && issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
-    throw new Error(`zli returned an unexpected result (${field}${issue?.message})`);
+    throw new Error(`${binary} returned an unexpected result (${field}${issue?.message})`);
   }
   const field = parsed.data;
   return {
@@ -257,6 +274,15 @@ async function readBenchmarkCsv(csvPath) {
     compressMs: field.ctimeMs,
     decompressMs: field.dtimeMs,
   };
+}
+
+/**
+ * @param {number} level
+ * @param {number} iterations
+ * @param {string} csvPath
+ */
+function benchmarkArguments(level, iterations, csvPath) {
+  return ['--level', String(level), '--num-iters', String(iterations), '--output-csv', csvPath];
 }
 
 /**
@@ -270,20 +296,10 @@ async function readBenchmarkCsv(csvPath) {
 async function benchmark(zliPath, inputPath, compressorArgs, job, csvPath, context) {
   await runZli(
     zliPath,
-    [
-      'benchmark',
-      inputPath,
-      ...compressorArgs,
-      '--level',
-      String(job.level),
-      '--num-iters',
-      String(job.iterations),
-      '--output-csv',
-      csvPath,
-    ],
+    ['benchmark', inputPath, ...compressorArgs, ...benchmarkArguments(job.level, job.iterations, csvPath)],
     context,
   );
-  return readBenchmarkCsv(csvPath);
+  return readBenchmarkCsv(csvPath, 'zli');
 }
 
 /**
@@ -340,10 +356,10 @@ async function removeScratch(directory) {
 }
 
 /**
- * The absolute path zli reads `inputPath` at. On Windows, where zli reads paths
- * in the ANSI code page, throws before anything is created or spawned if the
+ * The absolute path the native binaries read `inputPath` at. On Windows, where
+ * they read paths in the ANSI code page, throws before anything is created or spawned if the
  * input path, or the temp folder every file of the run lives under, has
- * characters the code page cannot represent, rather than handing zli a
+ * characters the code page cannot represent, rather than handing them a
  * mangled path.
  *
  * @param {string} inputPath
@@ -351,16 +367,16 @@ async function removeScratch(directory) {
  */
 async function checkInputPath(inputPath, {tempRoot = os.tmpdir(), codePage} = {}) {
   const ansiCodePage = codePage ?? (process.platform === 'win32' ? await windowsAnsiCodePage() : undefined);
-  // Absolute paths never start with '-', so zli cannot parse them as flags.
+  // Absolute paths never start with '-', so they cannot be parsed as flags.
   const absolute = path.resolve(inputPath);
   if (ansiCodePage !== undefined) {
-    assertReadableByZli(
+    assertReadableByNativeTools(
       tempRoot,
       'The temporary folder path',
       'Set the TEMP environment variable to a folder whose path uses only characters in that code page.',
       ansiCodePage,
     );
-    assertReadableByZli(
+    assertReadableByNativeTools(
       absolute,
       'The input file path',
       'Rename the file, or move it to a folder whose path uses only characters in that code page.',
@@ -434,4 +450,35 @@ async function* measureOpenZL(
   }
 }
 
-module.exports = {checkInputPath, measureOpenZL, progressFraction};
+/**
+ * Measures zstd with the zstd-benchmark binary built beside zli, so zstd jobs
+ * are timed the same way as OpenZL jobs: a reused context, one-shot calls, the
+ * same CSV. Takes the same options as measureOpenZL.
+ *
+ * @param {string} zstdBenchmarkPath
+ * @param {string} inputPath
+ * @param {{level: number; iterations: number}} job
+ * @param {ZliContext & {tempRoot?: string; codePage?: number}} [options]
+ * @returns {Promise<ZliMeasurement>}
+ */
+async function measureZstd(
+  zstdBenchmarkPath,
+  inputPath,
+  job,
+  {signal, onChild, tempRoot = os.tmpdir(), codePage} = {},
+) {
+  const input = await checkInputPath(inputPath, {tempRoot, codePage});
+  const workDirectory = await fs.mkdtemp(path.join(tempRoot, 'openzl-playground-'));
+  try {
+    const csvPath = path.join(workDirectory, 'zstd.csv');
+    await runNative(zstdBenchmarkPath, [input, ...benchmarkArguments(job.level, job.iterations, csvPath)], {
+      signal,
+      onChild,
+    });
+    return await readBenchmarkCsv(csvPath, 'zstd-benchmark');
+  } finally {
+    await removeScratch(workDirectory);
+  }
+}
+
+module.exports = {checkInputPath, measureOpenZL, measureZstd, progressFraction};
