@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
+load("@fbcode_macros//build_defs:cpp_binary.bzl", "cpp_binary")
 load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
 load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
 load("@fbcode_macros//build_defs:sanitizers.bzl", "sanitizers")
@@ -140,4 +141,17 @@ cpp_unittest(
         ":decompress",
     ],
     external_deps = [("cuda", None, "cuda-lazy")],
+)
+
+# CPU baseline for Nimble-shaped frames: a thread pool decodes the frames the
+# way concurrent Nimble readers do.
+cpp_binary(
+    # @autodeps-skip
+    name = "bench_nimble_frames",
+    srcs = ["bench/bench_nimble_frames.cpp"],
+    deps = [
+        "../../../../cpp:openzl_cpp",
+        "../../../../tools:arg",
+        "../../testkit:testkit",
+    ],
 )
