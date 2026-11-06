@@ -713,7 +713,19 @@ __device__ __forceinline__ uint32_t dRankOnesBeforeFast(
 {
     const uint32_t wordIndex = bitPos >> 5u;
     const uint32_t bit       = bitPos & 31u;
-    uint32_t count           = directory[dirBase + wordIndex];
+    // A full block's terminal rank can reach 65536, beyond uint16. Reconstruct
+    // it from the preceding prefix (at most 65504) and final word.
+    if (bitPos == kRankSelectMaxBlockSize) {
+        const uint32_t previous = wordIndex - 1u;
+        const uint32_t b        = previous << 2u;
+        const uint32_t word     = static_cast<uint32_t>(bitmap[b])
+                | (static_cast<uint32_t>(bitmap[b + 1u]) << 8u)
+                | (static_cast<uint32_t>(bitmap[b + 2u]) << 16u)
+                | (static_cast<uint32_t>(bitmap[b + 3u]) << 24u);
+        return uint32_t(directory[dirBase + previous])
+                + static_cast<uint32_t>(__popc(word));
+    }
+    uint32_t count = directory[dirBase + wordIndex];
     if (bit != 0u) {
         const uint32_t b = wordIndex << 2u;
         const uint32_t w = static_cast<uint32_t>(bitmap[b])
@@ -880,7 +892,9 @@ __device__ bool buildRankSelectDirectoryCooperative(
     if constexpr (ComputeOnes) {
         __syncthreads();
         if (threadIdx.x == 0) {
-            *ones = directory[dirBase + words];
+            // The terminal directory entry may wrap at 65536 ones. The
+            // inclusive warp totals retain the full 32-bit aggregate.
+            *ones = s_warpTotals[numWarps - 1u];
         }
         __syncthreads();
     }
