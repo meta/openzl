@@ -5,8 +5,8 @@
 'use strict';
 
 /**
- * @import {Candidate, OpenZlBenchmarkJob} from '../../../web/compression_playground/src/benchmarkTypes.ts'
- * @import {ListedProfile} from '../../../web/compression_playground/src/wasmProfiles.ts'
+ * @import {Candidate, OpenZlBenchmarkJob} from '../../../tools/web/compression_playground/src/benchmarkTypes.ts'
+ * @import {ListedProfile} from '../../../tools/web/compression_playground/src/wasmProfiles.ts'
  */
 
 const fs = require('node:fs/promises');

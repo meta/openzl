@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 /** The renderer's Vite and React come from the web tools' Yarn workspace. */
-const WEB_WORKSPACE = path.join(__dirname, '..', '..', 'web');
+const WEB_WORKSPACE = path.join(__dirname, '..', '..', 'tools', 'web');
 const NATIVE_SOURCE = path.join(__dirname, 'electron', 'native');
 const NATIVE_BUILD = path.join(NATIVE_SOURCE, 'build');
 const NATIVE_TARGETS = ['zli', 'zstd-benchmark'];

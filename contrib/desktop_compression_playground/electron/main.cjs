@@ -5,9 +5,9 @@
 'use strict';
 
 /**
- * @import {DesktopRunConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts'
+ * @import {DesktopRunConfig} from '../../../tools/web/compression_playground/src/benchmarkTypes.ts'
  * @import {ResolvedRunConfig, WorkerOutput} from './native-worker.cjs'
- * @import {ListedProfile} from '../../../web/compression_playground/src/wasmProfiles.ts'
+ * @import {ListedProfile} from '../../../tools/web/compression_playground/src/wasmProfiles.ts'
  */
 
 /**

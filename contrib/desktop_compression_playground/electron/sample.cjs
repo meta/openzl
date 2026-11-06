@@ -2,7 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 
-/** @import {DesktopRunConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts' */
+/** @import {DesktopRunConfig} from '../../../tools/web/compression_playground/src/benchmarkTypes.ts' */
 
 'use strict';
 
@@ -18,7 +18,7 @@ const SAMPLE_SIZE = sample.size;
  * The sample in the source tree, which electron-builder copies into the app's
  * resources. `sample.path` is relative to the OpenZL repository root.
  */
-const SAMPLE_SOURCE_PATH = path.resolve(__dirname, '..', '..', '..', '..', sample.path);
+const SAMPLE_SOURCE_PATH = path.resolve(__dirname, '..', '..', '..', sample.path);
 
 /**
  * Whether a validated request's input asks for the bundled sample.

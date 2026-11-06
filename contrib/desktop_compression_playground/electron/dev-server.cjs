@@ -9,7 +9,7 @@
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 
-const WEB_PLAYGROUND = path.join(__dirname, '..', '..', '..', 'web', 'compression_playground');
+const WEB_PLAYGROUND = path.join(__dirname, '..', '..', '..', 'tools', 'web', 'compression_playground');
 
 /**
  * Serves the web playground with the web workspace's Vite, which takes the next

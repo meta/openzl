@@ -2,7 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 
-/** @import {DesktopRunConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts' */
+/** @import {DesktopRunConfig} from '../../../tools/web/compression_playground/src/benchmarkTypes.ts' */
 
 'use strict';
 

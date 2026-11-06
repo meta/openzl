@@ -5,8 +5,8 @@
 'use strict';
 
 /**
- * @import {BenchmarkJob, DesktopRunConfig, RejectedCompressor, RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts'
- * @import {BenchmarkResult as BenchmarkMetrics} from '../../../wasm/js/wasm_api.js'
+ * @import {BenchmarkJob, DesktopRunConfig, RejectedCompressor, RunMessage} from '../../../tools/web/compression_playground/src/benchmarkTypes.ts'
+ * @import {BenchmarkResult as BenchmarkMetrics} from '../../../tools/wasm/js/wasm_api.js'
  * @import {ZliChildEvent, ZliMeasurement} from './zli-client.cjs'
  */
 
