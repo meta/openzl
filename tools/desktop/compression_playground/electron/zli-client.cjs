@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
 const {z} = require('zod');
+const {assertReadableByZli, windowsAnsiCodePage} = require('./ansi-path.cjs');
 
 const TRAINING_THREADS = Math.min(4, Math.max(1, os.availableParallelism()));
 const csvCount = z.string().trim().regex(/^\d+$/, 'expected a whole number').transform(Number);
@@ -339,6 +340,37 @@ async function removeScratch(directory) {
 }
 
 /**
+ * The absolute path zli reads `inputPath` at. On Windows, where zli reads paths
+ * in the ANSI code page, throws before anything is created or spawned if the
+ * input path, or the temp folder every file of the run lives under, has
+ * characters the code page cannot represent, rather than handing zli a
+ * mangled path.
+ *
+ * @param {string} inputPath
+ * @param {{tempRoot?: string; codePage?: number}} [options] `codePage` is for tests; on win32 it is read from the registry, and elsewhere paths are not checked.
+ */
+async function checkInputPath(inputPath, {tempRoot = os.tmpdir(), codePage} = {}) {
+  const ansiCodePage = codePage ?? (process.platform === 'win32' ? await windowsAnsiCodePage() : undefined);
+  // Absolute paths never start with '-', so zli cannot parse them as flags.
+  const absolute = path.resolve(inputPath);
+  if (ansiCodePage !== undefined) {
+    assertReadableByZli(
+      tempRoot,
+      'The temporary folder path',
+      'Set the TEMP environment variable to a folder whose path uses only characters in that code page.',
+      ansiCodePage,
+    );
+    assertReadableByZli(
+      absolute,
+      'The input file path',
+      'Rename the file, or move it to a folder whose path uses only characters in that code page.',
+      ansiCodePage,
+    );
+  }
+  return absolute;
+}
+
+/**
  * Measures an OpenZL job with zli, yielding each measurement as it is made: the
  * one an untrained job produces, or one per trained candidate, best ratio
  * first. zli train benchmarks candidates at a fixed iteration count and has no
@@ -353,13 +385,18 @@ async function removeScratch(directory) {
  * @param {string} zliPath
  * @param {string} inputPath
  * @param {OpenZlBenchmarkJob} job
- * @param {ZliContext & {tempRoot?: string; onProgress?: (fraction: number) => void}} [options]
+ * @param {ZliContext & {tempRoot?: string; codePage?: number; onProgress?: (fraction: number) => void}} [options]
  * @returns {AsyncGenerator<OpenZLOutcome>}
  */
-async function* measureOpenZL(zliPath, inputPath, job, {signal, onChild, onProgress, tempRoot = os.tmpdir()} = {}) {
+async function* measureOpenZL(
+  zliPath,
+  inputPath,
+  job,
+  {signal, onChild, onProgress, tempRoot = os.tmpdir(), codePage} = {},
+) {
   const context = {signal, onChild};
-  // Absolute paths never start with '-', so zli cannot parse them as flags.
-  const input = path.resolve(inputPath);
+  // Before anything is created or spawned.
+  const input = await checkInputPath(inputPath, {tempRoot, codePage});
   const workDirectory = await fs.mkdtemp(path.join(tempRoot, 'openzl-playground-'));
   try {
     if (job.training === null) {
@@ -397,4 +434,4 @@ async function* measureOpenZL(zliPath, inputPath, job, {signal, onChild, onProgr
   }
 }
 
-module.exports = {measureOpenZL, progressFraction};
+module.exports = {checkInputPath, measureOpenZL, progressFraction};
