@@ -6,7 +6,8 @@
 
 /**
  * @import {DesktopRunConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts'
- * @import {WorkerOutput} from './native-worker.cjs'
+ * @import {ResolvedRunConfig, WorkerOutput} from './native-worker.cjs'
+ * @import {ListedProfile} from '../../../web/compression_playground/src/wasmProfiles.ts'
  */
 
 /**
@@ -37,9 +38,11 @@ const {APP_ORIGIN, APP_SCHEME, originOf, resolveBundlePath} = require('./app-pro
 const {validateRequest} = require('./benchmark-request.cjs');
 const {startDevServer} = require('./dev-server.cjs');
 const {isAllowedExternalUrl} = require('./external-links.cjs');
+const {SAMPLE_NAME, SAMPLE_SOURCE_PATH, asksForSample} = require('./sample.cjs');
 const {parseWorkerMessage} = require('./worker-messages.cjs');
 
 const BENCHMARK_CHANNEL = 'openzl:benchmark';
+const PROFILES_CHANNEL = 'openzl:list-profiles';
 const CANCEL_GRACE_MS = 5000;
 
 /** @type {BrowserWindow | undefined} */
@@ -65,13 +68,48 @@ function nativeBinaryPath(name) {
     : path.join(__dirname, 'native', 'build', 'Release', executable);
 }
 
+function samplePath() {
+  return app.isPackaged ? path.join(process.resourcesPath, SAMPLE_NAME) : SAMPLE_SOURCE_PATH;
+}
+
+/**
+ * The run the worker is given: the bundled sample, if asked for, as the path
+ * it is installed at.
+ *
+ * @param {DesktopRunConfig} config
+ * @returns {ResolvedRunConfig}
+ */
+function resolveInput(config) {
+  if (!asksForSample(config.input)) {
+    return {...config, input: config.input};
+  }
+  const sample = samplePath();
+  if (!fs.existsSync(sample)) {
+    throw new Error(
+      app.isPackaged ? 'The bundled sample is missing from this installation' : `The sample is missing: ${sample}`,
+    );
+  }
+  return {...config, input: {path: sample}};
+}
+
+/**
+ * The zli client, for the profile list. electron-builder leaves files it copies
+ * as extraResources out of the asar, and the worker's client is one, so the
+ * packaged app loads the copy installed beside the worker.
+ *
+ * @returns {{listProfiles: (zliPath: string) => Promise<ListedProfile[]>}}
+ */
+function zliClient() {
+  return require(app.isPackaged ? path.join(process.resourcesPath, 'native', 'zli-client.cjs') : './zli-client.cjs');
+}
+
 function nativeHostPath() {
   return app.isPackaged
     ? path.join(process.resourcesPath, 'native', 'native-worker.cjs')
     : path.join(__dirname, 'native-worker.cjs');
 }
 
-/** @param {Electron.IpcMainEvent} event */
+/** @param {Electron.IpcMainEvent | Electron.IpcMainInvokeEvent} event */
 function isTrustedSender(event) {
   if (
     mainWindow === undefined ||
@@ -116,7 +154,7 @@ function serveRenderer() {
  * reports, so it can kill them if the worker dies or ignores a cancel: children
  * do not exit with their parent on their own.
  *
- * @param {DesktopRunConfig} config
+ * @param {ResolvedRunConfig} config
  * @param {Electron.MessagePortMain} port
  */
 function startRun(config, port) {
@@ -391,13 +429,28 @@ function registerIpc() {
       if (activeRuns.size > 0) {
         throw new Error('A benchmark is already running');
       }
-      config = validateRequest(rawRequest);
+      config = resolveInput(validateRequest(rawRequest));
     } catch (error) {
       port.postMessage({type: 'failed', message: messageOf(error)});
       port.close();
       return;
     }
     startRun(config, port);
+  });
+  // One `zli list-profiles` for the app's life; a failed one is tried again.
+  /** @type {Promise<ListedProfile[]> | undefined} */
+  let profiles;
+  ipcMain.handle(PROFILES_CHANNEL, (event) => {
+    if (!isTrustedSender(event)) {
+      throw new Error('Untrusted profile request');
+    }
+    profiles ??= zliClient()
+      .listProfiles(nativeBinaryPath('zli'))
+      .catch((error) => {
+        profiles = undefined;
+        throw error;
+      });
+    return profiles;
   });
 }
 

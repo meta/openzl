@@ -71,12 +71,18 @@ async function main() {
     require: 'undefined',
     process: 'undefined',
     module: 'undefined',
-    bridge: ['getPathForFile', 'startBenchmark'],
+    bridge: ['getPathForFile', 'listProfiles', 'startBenchmark'],
     bridgeFrozen: true,
     origin: 'app://bundle',
     rendered: true,
     permissions: {notifications: 'denied', geolocation: 'denied', camera: 'denied', microphone: 'denied'},
   });
+
+  // The profile list comes from the bundled zli, over the same trusted-sender IPC.
+  const profiles = await window.webContents.executeJavaScript(
+    'window.openzlDesktop.listProfiles().then((list) => list.map((profile) => profile.name))',
+  );
+  assert.ok(profiles.includes('serial') && profiles.includes('csv'), `zli listed ${profiles}`);
 
   // Stubbed after startup: main.cjs calls shell.openExternal through the shared module object.
   const {shell} = require('electron');
@@ -96,7 +102,7 @@ async function main() {
   assert.deepEqual(opened, ['https://openzl.org/getting-started/quick-start/', 'https://openzl.org/sddl/']);
 
   const input = {path: '/nonexistent/sample.bin'};
-  const row = {rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial'};
+  const row = {rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', profileArg: ''};
   const training = {paretoFrontier: true, candidates: 10};
   const rejections = {
     iterations: await rendererBenchmark(window, {input, iterations: 0, compressors: [{...row, training}]}),

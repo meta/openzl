@@ -6,7 +6,7 @@ import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
-import type {DesktopRunConfig, RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts';
+import type {RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts';
 import {planJobs, run} from '../electron/native-worker.cjs';
 import {
   FAKE_ZSTD_BENCHMARK,
@@ -35,19 +35,22 @@ function inputFile(): string {
   return inputPath;
 }
 
-function config(compressors: DesktopRunConfig['compressors'], path = '/tmp/sample.bin'): DesktopRunConfig {
+type ResolvedRunConfig = Parameters<typeof planJobs>[0];
+
+function config(compressors: ResolvedRunConfig['compressors'], path = '/tmp/sample.bin'): ResolvedRunConfig {
   return {input: {path}, iterations: 2, compressors};
 }
 
 describe('planJobs', () => {
-  it('splits each row into one job per level, with the browser job ids', () => {
+  it('splits each row into one job per level, with the browser job ids and the profile argument', () => {
     const {jobs, rejected} = planJobs(
       config([
         {
           rowId: 1,
           compressor: 'OpenZL',
           levels: [6],
-          profile: 'serial',
+          profile: 'csv',
+          profileArg: ';',
           training: {paretoFrontier: true, candidates: 10},
         },
         {rowId: 2, compressor: 'zstd', levels: [1, 3]},
@@ -62,7 +65,8 @@ describe('planJobs', () => {
         level: 6,
         iterations: 2,
         compressor: 'OpenZL',
-        profile: 'serial',
+        profile: 'csv',
+        profileArg: ';',
         training: {paretoFrontier: true, candidates: 10},
       },
       {id: '2-zstd-1', rowId: 2, level: 1, iterations: 2, compressor: 'zstd'},
@@ -88,7 +92,7 @@ describe('run', () => {
         zstdBenchmarkPath: zstdBenchmark(),
         config: config(
           [
-            {rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', training: null},
+            {rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', profileArg: '', training: null},
             {rowId: 2, compressor: 'zstd', levels: [3]},
             {rowId: 3, compressor: 'gzip', levels: [6]},
           ],
@@ -138,6 +142,7 @@ describe('run', () => {
               compressor: 'OpenZL',
               levels: [6],
               profile: 'serial',
+              profileArg: '',
               training: {paretoFrontier: true, candidates: 10},
             },
             {rowId: 2, compressor: 'gzip', levels: [5]},
@@ -178,6 +183,7 @@ describe('run', () => {
               compressor: 'OpenZL',
               levels: [1],
               profile: 'serial',
+              profileArg: '',
               training: {paretoFrontier: true, candidates: 10},
             },
           ],

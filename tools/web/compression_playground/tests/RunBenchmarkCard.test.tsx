@@ -170,7 +170,7 @@ describe('RunBenchmarkCard', () => {
           runBlockers={[]}
         />,
       );
-      expect(screen.getByText('Loading…')).toBeInTheDocument();
+      expect(screen.getByText(/Preparing for benchmarks/)).toBeInTheDocument();
       expect(barPercent()).toBe(0);
     });
   });
@@ -187,7 +187,7 @@ describe('RunBenchmarkCard', () => {
   it('passes the current configuration to the run handler', () => {
     const config: RunConfig = {
       input: new File(['data'], 'data.bin'),
-      compressors: [{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', training: null}],
+      compressors: [{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', profileArg: '', training: null}],
       iterations: 5,
     };
     const onRun = vi.fn();
@@ -212,7 +212,7 @@ describe('RunBenchmarkCard', () => {
   it('disables actions while a run is loading', () => {
     const config: RunConfig = {
       input: new File(['data'], 'data.bin'),
-      compressors: [{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', training: null}],
+      compressors: [{rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', profileArg: '', training: null}],
       iterations: 5,
     };
     renderWithPlaygroundTheme(

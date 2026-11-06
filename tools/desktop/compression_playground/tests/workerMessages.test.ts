@@ -10,6 +10,7 @@ const TRAINED_JOB = {
   iterations: 5,
   compressor: 'OpenZL',
   profile: 'serial',
+  profileArg: '',
   training: {paretoFrontier: true, candidates: 10},
 };
 
