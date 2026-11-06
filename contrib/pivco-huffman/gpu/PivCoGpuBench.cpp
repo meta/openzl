@@ -4,8 +4,6 @@
 
 #include "contrib/pivco-huffman/gpu/pivco_gpu.cuh"
 
-#include <dirent.h>
-#include <sys/stat.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -13,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -36,13 +35,14 @@ namespace {
 constexpr size_t kSyntheticBaseBytes = 8 * 1024 * 1024;
 
 struct Args {
-    size_t size = size_t{ 1 } << 30;
+    size_t size = size_t{ 4 } << 20;
     // 64 KiB is the reselected default: it decodes ~14-20% faster than 32 KiB
     // (halves per-block overhead at no merge cost) with slightly better ratio,
     // and is the max the scheduled fast path supports
     // (kRankSelectMaxBlockSize).
-    size_t blockSize = 64 * 1024;
-    int iterations   = 20;
+    size_t blockSize  = 64 * 1024;
+    int iterations    = 20;
+    size_t stackLimit = 0;
     // Real benchmark inputs live in the upstream pivco-huffman repo under
     // extras/datasets (https://github.com/MarcinZukowski/pivco-huffman). Clone
     // it and pass --dataset-dir=<checkout>/extras/datasets; the default assumes
@@ -86,6 +86,22 @@ struct Result {
     double encodeMinMs;
     double encodeMedianGiBps;
     double encodeMinTimeGiBps;
+    size_t encodeWorkspaceBytes;
+    size_t conservativeWorkspaceBytes;
+    size_t residentBuffersBytes;
+    size_t publicBuffersBytes;
+    size_t stackLimitBytes;
+    size_t deviceUsedBeforeBuffers;
+    size_t deviceUsedWithPublicBuffers;
+    double weightsMs;
+    double contextMs;
+    double cpuEncodeMs;
+    double cpuIndexedMs;
+    double publicReuseMs;
+    double publicAllocateMs;
+    double asyncReuseMs;
+    double publicResidentMs;
+    double asyncResidentMs;
     double h2dMs;
     double d2hMs;
 };
@@ -107,6 +123,8 @@ Args parseArgs(int argc, char** argv)
             args.blockSize = std::strtoull(value.c_str(), nullptr, 0);
         } else if (key == "--iterations") {
             args.iterations = std::atoi(value.c_str());
+        } else if (key == "--stack-limit") {
+            args.stackLimit = std::strtoull(value.c_str(), nullptr, 0);
         } else if (key == "--dataset-dir") {
             args.datasetDir = value;
         } else if (key == "--dataset") {
@@ -128,14 +146,7 @@ std::string pathJoin(const std::string& dir, const std::string& name)
 
 bool isDirectory(const std::string& path)
 {
-    struct stat st;
-    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
-
-bool isRegularFile(const std::string& path)
-{
-    struct stat st;
-    return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+    return std::filesystem::is_directory(path);
 }
 
 std::string resolveDatasetDir(const std::string& requested)
@@ -152,22 +163,13 @@ std::string resolveDatasetDir(const std::string& requested)
 
 std::vector<std::string> listDatasetFiles(const std::string& dir)
 {
-    DIR* const handle = opendir(dir.c_str());
-    if (handle == nullptr) {
-        throw std::runtime_error("cannot open dataset directory: " + dir);
-    }
-
     std::vector<std::string> names;
-    while (dirent* const entry = readdir(handle)) {
-        const std::string name = entry->d_name;
-        if (name == "." || name == ".." || name == "README.md") {
-            continue;
-        }
-        if (isRegularFile(pathJoin(dir, name))) {
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        const std::string name = entry.path().filename().string();
+        if (name != "README.md" && entry.is_regular_file()) {
             names.push_back(name);
         }
     }
-    closedir(handle);
     std::sort(names.begin(), names.end());
     return names;
 }
@@ -383,6 +385,13 @@ std::array<uint32_t, 256> syntheticCounts(const std::string& name)
     if (name == "zipfian") {
         return zipfianCounts();
     }
+    if (name == "three_sym_50_25_25") {
+        std::array<uint32_t, 256> counts{};
+        counts[0] = 2;
+        counts[1] = 1;
+        counts[2] = 1;
+        return counts;
+    }
     if (name == "sparse_4") {
         return equalCounts(4);
     }
@@ -419,10 +428,11 @@ std::array<uint32_t, 256> syntheticCounts(const std::string& name)
 std::vector<std::string> syntheticNames()
 {
     return {
-        "proba80",  "proba50",   "proba14",   "proba02",    "bell_s10",
-        "bell_s30", "bell_s80",  "uniform",   "english",    "zipfian",
-        "sparse_4", "sparse_16", "geometric", "two_sym_eq", "two_sym_90/10",
-        "flat_M3",  "flat_M5",   "flat_M6",   "flat_M7",
+        "proba80",   "proba50",    "proba14",       "proba02",
+        "bell_s10",  "bell_s30",   "bell_s80",      "uniform",
+        "english",   "zipfian",    "sparse_4",      "sparse_16",
+        "geometric", "two_sym_eq", "two_sym_90/10", "flat_M3",
+        "flat_M5",   "flat_M6",    "flat_M7",       "three_sym_50_25_25",
     };
 }
 
@@ -542,7 +552,7 @@ Encoded cpuEncode(
             data.data(),
             data.size(),
             blockSize,
-            &ZL_PivCoHuffmanEncode_generic);
+            nullptr);
     if (encodedSize == SIZE_MAX) {
         throw std::runtime_error("CPU encode failed");
     }
@@ -635,16 +645,16 @@ double gibPerSecond(size_t bytes, double milliseconds)
 
 Result runDataset(const Args& args, const DatasetInput& input)
 {
-    const Weights weights   = buildWeights(input.data);
+    Weights weights;
+    const double weightsMs =
+            timeHostMs([&] { weights = buildWeights(input.data); });
     const Encoded encoded   = cpuEncode(weights, input.data, args.blockSize);
     const size_t numOffsets = encoded.offsets.size();
     const size_t encodeBound =
             ZL_PivCoHuffmanEncode_bound(input.data.size(), args.blockSize);
-    const size_t workspaceBytes = std::max(
-            pivcoGpuEncodeWorkspaceBytes(input.data.size(), args.blockSize),
-            pivcoGpuDecodeWorkspaceBytes(input.data.size(), args.blockSize));
 
     PivCoGpuContext* context      = nullptr;
+    const auto contextStart       = std::chrono::steady_clock::now();
     const ZL_Report contextReport = pivcoGpuContextCreate(
             &context,
             weights.bytes.data(),
@@ -653,6 +663,30 @@ Result runDataset(const Args& args, const DatasetInput& input)
     if (ZL_isError(contextReport)) {
         throw std::runtime_error("context creation failed");
     }
+
+    const size_t encodeWorkspaceBytes = pivcoGpuEncodeWorkspaceBytesForContext(
+            context, input.data.size(), args.blockSize);
+    if (encodeWorkspaceBytes == SIZE_MAX) {
+        throw std::runtime_error("invalid context-specific workspace budget");
+    }
+    const size_t workspaceBytes = std::max(
+            encodeWorkspaceBytes,
+            pivcoGpuDecodeWorkspaceBytes(input.data.size(), args.blockSize));
+
+    const double contextMs =
+            std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - contextStart)
+                    .count();
+
+    size_t deviceFree = 0, deviceTotal = 0, stackLimitBytes = 0;
+    checkCuda(
+            cudaMemGetInfo(&deviceFree, &deviceTotal),
+            "initial memory snapshot");
+    const size_t deviceUsedBeforeBuffers = deviceTotal - deviceFree;
+    checkCuda(
+            cudaDeviceGetLimit(&stackLimitBytes, cudaLimitStackSize),
+            "stack limit");
+    size_t deviceUsedWithPublicBuffers = 0;
 
     uint8_t* src_d           = nullptr;
     uint8_t* encoded_d       = nullptr;
@@ -810,6 +844,304 @@ Result runDataset(const Args& args, const DatasetInput& input)
         throw std::runtime_error("GPU encoded size differs from CPU size");
     }
 
+    // Verify the encoder itself, rather than only its output size. These
+    // transfers and comparisons are deliberately outside CUDA-event timing.
+    std::vector<uint8_t> gpuEncoded(gpuEncodedSize);
+    std::vector<uint64_t> gpuOffsets(numOffsets);
+    if (!gpuEncoded.empty()) {
+        checkCuda(
+                cudaMemcpy(
+                        gpuEncoded.data(),
+                        gpuEncoded_d,
+                        gpuEncoded.size(),
+                        cudaMemcpyDeviceToHost),
+                "copy encoded bytes for verification");
+    }
+    checkCuda(
+            cudaMemcpy(
+                    gpuOffsets.data(),
+                    gpuOffsets_d,
+                    gpuOffsets.size() * sizeof(uint64_t),
+                    cudaMemcpyDeviceToHost),
+            "copy encoded offsets for verification");
+    if (gpuEncoded != encoded.bytes || gpuOffsets != encoded.offsets) {
+        throw std::runtime_error(
+                "GPU encoded bytes or offsets differ from CPU");
+    }
+    std::vector<uint8_t> cpuDecoded(input.data.size());
+    std::vector<uint8_t> cpuScratch(ZL_PivCoHuffmanDecode_scratchBytes(
+            input.data.size(), args.blockSize));
+    if (!ZL_PivCoHuffman_decode(
+                cpuDecoded.data(),
+                cpuDecoded.size(),
+                cpuScratch.data(),
+                cpuScratch.size(),
+                weights.bytes.data(),
+                weights.bytes.size(),
+                gpuEncoded.data(),
+                gpuEncoded.size(),
+                args.blockSize,
+                &ZL_PivCoHuffmanDecode_generic)
+        || cpuDecoded != input.data) {
+        throw std::runtime_error("CPU decode of GPU encoded bytes failed");
+    }
+
+    // Whole-call wall timings use pageable host buffers and a reused context.
+    // Reuse includes raw H2D, the blocking public API and compressed D2H;
+    // Allocate additionally includes all four per-call device buffers.
+    // Weight/context setup is reported separately. Verification is untimed.
+    std::vector<float> publicReuseTimes, publicAllocateTimes;
+    std::vector<float> asyncReuseTimes, publicResidentTimes, asyncResidentTimes;
+    std::vector<float> cpuEncodeTimes, cpuIndexedTimes;
+    std::vector<uint8_t> cpuOutput(encodeBound);
+    std::vector<uint8_t> cpuEncodeScratch(ZL_PivCoHuffmanEncode_scratchElements(
+            input.data.size(), args.blockSize));
+    const auto publicCall = [&](uint8_t* source,
+                                uint8_t* destination,
+                                uint64_t* offsets,
+                                uint8_t* workspace) {
+        checkCuda(
+                cudaMemcpyAsync(
+                        source,
+                        input.data.data(),
+                        input.data.size(),
+                        cudaMemcpyHostToDevice,
+                        stream),
+                "public H2D");
+        const ZL_Report report = pivcoGpuEncode(
+                context,
+                destination,
+                encodeBound,
+                offsets,
+                numOffsets,
+                source,
+                input.data.size(),
+                args.blockSize,
+                workspace,
+                encodeWorkspaceBytes,
+                reinterpret_cast<ZL_GPU_Stream>(stream));
+        if (ZL_isError(report)
+            || ZL_validResult(report) != encoded.bytes.size()) {
+            throw std::runtime_error("public encode failed");
+        }
+        checkCuda(
+                cudaMemcpyAsync(
+                        gpuEncoded.data(),
+                        destination,
+                        gpuEncoded.size(),
+                        cudaMemcpyDeviceToHost,
+                        stream),
+                "public data D2H");
+        checkCuda(
+                cudaMemcpyAsync(
+                        gpuOffsets.data(),
+                        offsets,
+                        numOffsets * sizeof(uint64_t),
+                        cudaMemcpyDeviceToHost,
+                        stream),
+                "public offsets D2H");
+        checkCuda(cudaStreamSynchronize(stream), "public final sync");
+    };
+    PivCoGpuEncodeResult* result_d = nullptr;
+    PivCoGpuEncodeResult* result_h = nullptr;
+    cudaEvent_t completed{};
+    checkCuda(
+            cudaMalloc(&result_d, sizeof(*result_d)),
+            "reused completion device");
+    checkCuda(
+            cudaMallocHost(&result_h, sizeof(*result_h)),
+            "reused completion pinned host");
+    checkCuda(
+            cudaEventCreateWithFlags(&completed, cudaEventDisableTiming),
+            "completion event");
+    const auto verifyResidentOutput = [&] {
+        checkCuda(
+                cudaMemcpyAsync(
+                        gpuEncoded.data(),
+                        gpuEncoded_d,
+                        gpuEncoded.size(),
+                        cudaMemcpyDeviceToHost,
+                        stream),
+                "verify output");
+        checkCuda(
+                cudaMemcpyAsync(
+                        gpuOffsets.data(),
+                        gpuOffsets_d,
+                        numOffsets * sizeof(uint64_t),
+                        cudaMemcpyDeviceToHost,
+                        stream),
+                "verify offsets");
+        checkCuda(cudaStreamSynchronize(stream), "verify complete");
+        if (gpuEncoded != encoded.bytes || gpuOffsets != encoded.offsets) {
+            throw std::runtime_error("resident output differs from CPU");
+        }
+    };
+    const auto asyncCall = [&](bool transfer) {
+        if (transfer) {
+            checkCuda(
+                    cudaMemcpyAsync(
+                            src_d,
+                            input.data.data(),
+                            input.data.size(),
+                            cudaMemcpyHostToDevice,
+                            stream),
+                    "async input H2D");
+        }
+        checkCuda(
+                pivcoGpuEncodeWithResultAsync(
+                        context,
+                        gpuEncoded_d,
+                        encodeBound,
+                        gpuOffsets_d,
+                        numOffsets,
+                        src_d,
+                        input.data.size(),
+                        args.blockSize,
+                        workspace_d,
+                        encodeWorkspaceBytes,
+                        result_d,
+                        stream),
+                "reused async encode");
+        checkCuda(
+                cudaMemcpyAsync(
+                        result_h,
+                        result_d,
+                        sizeof(*result_h),
+                        cudaMemcpyDeviceToHost,
+                        stream),
+                "completion D2H");
+        if (transfer) {
+            checkCuda(
+                    cudaMemcpyAsync(
+                            gpuEncoded.data(),
+                            gpuEncoded_d,
+                            gpuEncoded.size(),
+                            cudaMemcpyDeviceToHost,
+                            stream),
+                    "async output D2H");
+            checkCuda(
+                    cudaMemcpyAsync(
+                            gpuOffsets.data(),
+                            gpuOffsets_d,
+                            numOffsets * sizeof(uint64_t),
+                            cudaMemcpyDeviceToHost,
+                            stream),
+                    "async offsets D2H");
+        }
+        checkCuda(cudaEventRecord(completed, stream), "record completion");
+        checkCuda(cudaEventSynchronize(completed), "wait completion");
+        const ZL_Report report = pivcoGpuEncodeResultReport(result_h);
+        if (ZL_isError(report)
+            || ZL_validResult(report) != encoded.bytes.size()) {
+            throw std::runtime_error("async completion failed");
+        }
+    };
+    for (int i = -1; i < args.iterations; ++i) {
+        const double asyncMs = timeHostMs([&] { asyncCall(true); });
+        if (gpuEncoded != encoded.bytes || gpuOffsets != encoded.offsets) {
+            throw std::runtime_error("async reused output differs from CPU");
+        }
+        const double publicResidentMs = timeHostMs([&] {
+            const ZL_Report report = pivcoGpuEncode(
+                    context,
+                    gpuEncoded_d,
+                    encodeBound,
+                    gpuOffsets_d,
+                    numOffsets,
+                    src_d,
+                    input.data.size(),
+                    args.blockSize,
+                    workspace_d,
+                    encodeWorkspaceBytes,
+                    reinterpret_cast<ZL_GPU_Stream>(stream));
+            if (ZL_isError(report)
+                || ZL_validResult(report) != encoded.bytes.size()) {
+                throw std::runtime_error("resident public encode failed");
+            }
+        });
+        verifyResidentOutput();
+        const double asyncResidentMs = timeHostMs([&] { asyncCall(false); });
+        verifyResidentOutput();
+        const double reuseMs = timeHostMs([&] {
+            publicCall(src_d, gpuEncoded_d, gpuOffsets_d, workspace_d);
+        });
+        if (gpuEncoded != encoded.bytes || gpuOffsets != encoded.offsets) {
+            throw std::runtime_error("public reused output differs from CPU");
+        }
+        const double allocateMs = timeHostMs([&] {
+            uint8_t *source = nullptr, *destination = nullptr,
+                    *workspace = nullptr;
+            uint64_t* offsets  = nullptr;
+            checkCuda(
+                    cudaMalloc(&source, input.data.size()),
+                    "public malloc src");
+            checkCuda(
+                    cudaMalloc(&destination, encodeBound), "public malloc dst");
+            checkCuda(
+                    cudaMalloc(&workspace, encodeWorkspaceBytes),
+                    "public malloc workspace");
+            checkCuda(
+                    cudaMalloc(&offsets, numOffsets * sizeof(uint64_t)),
+                    "public malloc offsets");
+            publicCall(source, destination, offsets, workspace);
+            // This query occurs only in the discarded warm-up iteration.
+            // It is a whole-device snapshot, not a per-process peak counter.
+            if (i < 0) {
+                checkCuda(
+                        cudaMemGetInfo(&deviceFree, &deviceTotal),
+                        "warm memory snapshot");
+                deviceUsedWithPublicBuffers = deviceTotal - deviceFree;
+            }
+            checkCuda(cudaFree(offsets), "public free offsets");
+            checkCuda(cudaFree(workspace), "public free workspace");
+            checkCuda(cudaFree(destination), "public free dst");
+            checkCuda(cudaFree(source), "public free src");
+        });
+        if (gpuEncoded != encoded.bytes || gpuOffsets != encoded.offsets) {
+            throw std::runtime_error(
+                    "public allocated output differs from CPU");
+        }
+        size_t cpuSize     = SIZE_MAX;
+        const double cpuMs = timeHostMs([&] {
+            cpuSize = ZL_PivCoHuffman_encode(
+                    cpuOutput.data(),
+                    cpuOutput.size(),
+                    cpuEncodeScratch.data(),
+                    cpuEncodeScratch.size(),
+                    weights.bytes.data(),
+                    weights.bytes.size(),
+                    weights.tableLog,
+                    input.data.data(),
+                    input.data.size(),
+                    args.blockSize,
+                    nullptr);
+        });
+        if (cpuSize != encoded.bytes.size()
+            || !std::equal(
+                    encoded.bytes.begin(),
+                    encoded.bytes.end(),
+                    cpuOutput.begin())) {
+            throw std::runtime_error("timed CPU output differs");
+        }
+        Encoded indexed;
+        const double indexedMs = timeHostMs([&] {
+            indexed = cpuEncode(weights, input.data, args.blockSize);
+        });
+        if (indexed.bytes != encoded.bytes
+            || indexed.offsets != encoded.offsets) {
+            throw std::runtime_error("timed indexed CPU output differs");
+        }
+        if (i >= 0) {
+            asyncReuseTimes.push_back(static_cast<float>(asyncMs));
+            publicResidentTimes.push_back(static_cast<float>(publicResidentMs));
+            asyncResidentTimes.push_back(static_cast<float>(asyncResidentMs));
+            publicReuseTimes.push_back(static_cast<float>(reuseMs));
+            publicAllocateTimes.push_back(static_cast<float>(allocateMs));
+            cpuEncodeTimes.push_back(static_cast<float>(cpuMs));
+            cpuIndexedTimes.push_back(static_cast<float>(indexedMs));
+        }
+    }
+
     std::vector<uint8_t> decoded(input.data.size());
     const double d2hMs = timeHostMs([&] {
         checkCuda(
@@ -826,6 +1158,9 @@ Result runDataset(const Args& args, const DatasetInput& input)
         throw std::runtime_error("decode verification failed");
     }
 
+    cudaEventDestroy(completed);
+    cudaFreeHost(result_h);
+    cudaFree(result_d);
     cudaFree(totalSize_d);
     cudaFree(status_d);
     cudaFree(gpuOffsets_d);
@@ -860,6 +1195,27 @@ Result runDataset(const Args& args, const DatasetInput& input)
         encodeMin,
         gibPerSecond(input.data.size(), encodeMedian),
         gibPerSecond(input.data.size(), encodeMin),
+        encodeWorkspaceBytes,
+        pivcoGpuEncodeWorkspaceBytes(input.data.size(), args.blockSize),
+        input.data.size() * 2 + encoded.bytes.size() + encodeBound
+                + PIVCO_GPU_DECODE_SRC_SLOP + PIVCO_GPU_DECODE_DST_SLOP
+                + workspaceBytes + numOffsets * sizeof(uint64_t) * 2
+                + sizeof(PivCoGpuStatus) + sizeof(uint64_t)
+                + sizeof(PivCoGpuEncodeResult),
+        input.data.size() + encodeBound + encodeWorkspaceBytes
+                + numOffsets * sizeof(uint64_t),
+        stackLimitBytes,
+        deviceUsedBeforeBuffers,
+        deviceUsedWithPublicBuffers,
+        weightsMs,
+        contextMs,
+        median(cpuEncodeTimes),
+        median(cpuIndexedTimes),
+        median(publicReuseTimes),
+        median(publicAllocateTimes),
+        median(asyncReuseTimes),
+        median(publicResidentTimes),
+        median(asyncResidentTimes),
         h2dMs,
         d2hMs,
     };
@@ -883,7 +1239,33 @@ void printResult(const Result& result)
               << " encode_min_ms=" << result.encodeMinMs
               << " encode_median_GiBps=" << result.encodeMedianGiBps
               << " encode_min_time_GiBps=" << result.encodeMinTimeGiBps
-              << " host_h2d_ms=" << result.h2dMs
+              << " encode_workspace_bytes=" << result.encodeWorkspaceBytes
+              << " conservative_encode_workspace_bytes="
+              << result.conservativeWorkspaceBytes
+              << " benchmark_resident_buffers_bytes="
+              << result.residentBuffersBytes
+              << " public_allocation_buffers_bytes="
+              << result.publicBuffersBytes
+              << " cuda_stack_limit_bytes=" << result.stackLimitBytes
+              << " device_used_before_buffers_bytes="
+              << result.deviceUsedBeforeBuffers
+              << " device_used_with_public_buffers_bytes="
+              << result.deviceUsedWithPublicBuffers
+              << " weights_setup_ms=" << result.weightsMs
+              << " context_setup_ms=" << result.contextMs
+              << " cpu_encode_reuse_median_ms=" << result.cpuEncodeMs
+              << " cpu_encode_allocate_index_median_ms=" << result.cpuIndexedMs
+              << " public_reuse_h2d_encode_d2h_median_ms="
+              << result.publicReuseMs
+              << " public_allocate_h2d_encode_d2h_median_ms="
+              << result.publicAllocateMs
+              << " async_reuse_h2d_encode_d2h_median_ms=" << result.asyncReuseMs
+              << " public_resident_encode_median_ms=" << result.publicResidentMs
+              << " async_reuse_resident_encode_median_ms="
+              << result.asyncResidentMs << " caller_device_completion_bytes="
+              << sizeof(PivCoGpuEncodeResult)
+              << " caller_pinned_completion_bytes="
+              << sizeof(PivCoGpuEncodeResult) << " host_h2d_ms=" << result.h2dMs
               << " host_d2h_ms=" << result.d2hMs << "\n";
 }
 
@@ -906,9 +1288,13 @@ int main(int argc, char** argv)
         checkCuda(
                 cudaGetDeviceProperties(&props, device),
                 "cudaGetDeviceProperties");
-        checkCuda(
-                cudaDeviceSetLimit(cudaLimitStackSize, 64 * 1024),
-                "cudaDeviceSetLimit(stack)");
+        // Leave the runtime default untouched unless reproducing a path
+        // that requires a larger stack (for example the recursive baseline).
+        if (args.stackLimit != 0) {
+            checkCuda(
+                    cudaDeviceSetLimit(cudaLimitStackSize, args.stackLimit),
+                    "cudaDeviceSetLimit(stack)");
+        }
 
         const std::vector<std::string> realFiles = listDatasetFiles(datasetDir);
         const std::vector<std::string> synthetic = syntheticNames();

@@ -40,10 +40,27 @@ ZL_Report pivcoGpuContextCreate(
 
 void pivcoGpuContextDestroy(PivCoGpuContext* context);
 
+/** Conservative budget, independent of the selected context. */
 size_t pivcoGpuEncodeWorkspaceBytes(size_t srcSize, size_t blockSize);
+
+/**
+ * Budget for the path selected by this immutable context and input shape.
+ * Returns 0 for empty/constant input and SIZE_MAX for invalid parameters.
+ * Cooperatively encoded input uses a bounded batch pool. Other shapes retain
+ * their existing path. Does not include input/output or completion buffers.
+ */
+size_t pivcoGpuEncodeWorkspaceBytesForContext(
+        const PivCoGpuContext* context,
+        size_t srcSize,
+        size_t blockSize);
 
 size_t pivcoGpuDecodeWorkspaceBytes(size_t dstSize, size_t blockSize);
 
+/**
+ * Blocking device-buffer encoder. On success, this call's submitted work
+ * is complete before return.
+ * On error, output bytes and offsets are invalid and may be partially written.
+ */
 ZL_Report pivcoGpuEncode(
         const PivCoGpuContext* context,
         void* dst_d,

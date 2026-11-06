@@ -9,6 +9,7 @@
 
 #include <cuda_runtime.h>
 
+#include "contrib/pivco-huffman/gpu/pivco_gpu_cooperative.cuh"
 #include "contrib/pivco-huffman/gpu/pivco_gpu_tree.h"
 
 namespace {
@@ -150,6 +151,27 @@ bool canUseFastRootConstFlat1Encode(const PivCoGpuTree& tree, size_t blockSize)
     return canUseFastRootConstFlat1Decode(tree, blockSize) && blockSize >= 1024;
 }
 
+size_t fastEncodeWorkspaceBytes(size_t size, size_t blockSize)
+{
+    const size_t blocks = numBlocksFor(size, blockSize);
+    if (blocks > (SIZE_MAX - kTreeWorkspaceBytes) / blockSize) {
+        return SIZE_MAX;
+    }
+    const size_t bitstreams = blocks * blockSize;
+    if (addOverflows(bitstreams, alignof(uint64_t) - 1)) {
+        return SIZE_MAX;
+    }
+    const size_t aligned = alignUpSize(bitstreams, alignof(uint64_t));
+    const size_t chunks =
+            blocks / kScanItemsPerBlock + (blocks % kScanItemsPerBlock != 0);
+    if (aligned > SIZE_MAX - kTreeWorkspaceBytes
+        || chunks > (SIZE_MAX - kTreeWorkspaceBytes - aligned)
+                        / (2 * sizeof(uint64_t))) {
+        return SIZE_MAX;
+    }
+    return kTreeWorkspaceBytes + aligned + 2 * chunks * sizeof(uint64_t);
+}
+
 bool canUseFastFlatRoot(const PivCoGpuTree& tree)
 {
     return tree.fastMode == PIVCO_GPU_FAST_FLAT_ROOT;
@@ -215,6 +237,21 @@ setStatus(PivCoGpuStatus* status, PivCoGpuStatusCode code, uint64_t detail)
     if (atomicCAS(&status->code, PIVCO_GPU_STATUS_OK, code)
         == PIVCO_GPU_STATUS_OK) {
         status->detail = detail;
+    }
+}
+
+__global__ void validateConstantEncodeKernel(
+        const uint8_t* src,
+        size_t srcSize,
+        uint8_t symbol,
+        PivCoGpuStatus* status)
+{
+    for (size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x; i < srcSize;
+         i += size_t(gridDim.x) * blockDim.x) {
+        if (src[i] != symbol) {
+            setStatus(status, PIVCO_GPU_STATUS_MISSING_SYMBOL, src[i]);
+            return;
+        }
     }
 }
 
@@ -713,7 +750,19 @@ __device__ __forceinline__ uint32_t dRankOnesBeforeFast(
 {
     const uint32_t wordIndex = bitPos >> 5u;
     const uint32_t bit       = bitPos & 31u;
-    uint32_t count           = directory[dirBase + wordIndex];
+    // A full block's terminal rank can reach 65536, beyond uint16. Reconstruct
+    // it from the preceding prefix (at most 65504) and final word.
+    if (bitPos == kRankSelectMaxBlockSize) {
+        const uint32_t previous = wordIndex - 1u;
+        const uint32_t b        = previous << 2u;
+        const uint32_t word     = static_cast<uint32_t>(bitmap[b])
+                | (static_cast<uint32_t>(bitmap[b + 1u]) << 8u)
+                | (static_cast<uint32_t>(bitmap[b + 2u]) << 16u)
+                | (static_cast<uint32_t>(bitmap[b + 3u]) << 24u);
+        return uint32_t(directory[dirBase + previous])
+                + static_cast<uint32_t>(__popc(word));
+    }
+    uint32_t count = directory[dirBase + wordIndex];
     if (bit != 0u) {
         const uint32_t b = wordIndex << 2u;
         const uint32_t w = static_cast<uint32_t>(bitmap[b])
@@ -880,7 +929,9 @@ __device__ bool buildRankSelectDirectoryCooperative(
     if constexpr (ComputeOnes) {
         __syncthreads();
         if (threadIdx.x == 0) {
-            *ones = directory[dirBase + words];
+            // The terminal directory entry may wrap at 65536 ones. The
+            // inclusive warp totals retain the full 32-bit aggregate.
+            *ones = s_warpTotals[numWarps - 1u];
         }
         __syncthreads();
     }
@@ -1607,7 +1658,11 @@ dLoad8Bounded(const uint8_t* p, uint32_t cursor, uint32_t total)
 {
     uint64_t v = 0;
     if (cursor + 8u <= total) {
+#if defined(_MSC_VER)
+        memcpy(&v, p + cursor, 8);
+#else
         __builtin_memcpy(&v, p + cursor, 8);
+#endif
     } else {
         for (uint32_t i = cursor; i < total; ++i) {
             v |= static_cast<uint64_t>(p[i]) << ((i - cursor) * 8u);
@@ -3022,6 +3077,39 @@ inline uint32_t chunkTdOutputsFor(size_t dstSize)
 
 extern "C" size_t pivcoGpuEncodeWorkspaceBytes(size_t srcSize, size_t blockSize)
 {
+    size_t bytes = workspaceBytesFor(srcSize, blockSize);
+#if !defined(__HIPCC__)
+    const size_t cooperativeBytes =
+            cooperativeEncodeWorkspaceBytes(srcSize, blockSize);
+    if (cooperativeBytes != SIZE_MAX && cooperativeBytes > bytes) {
+        bytes = cooperativeBytes;
+    }
+#endif
+    return bytes;
+}
+
+extern "C" size_t pivcoGpuEncodeWorkspaceBytesForContext(
+        const PivCoGpuContext* context,
+        size_t srcSize,
+        size_t blockSize)
+{
+    if (context == nullptr || blockSize == 0
+        || blockSize > PIVCO_GPU_MAX_BLOCK_SIZE
+        || addOverflows(srcSize, blockSize - 1)
+        || numBlocksFor(srcSize, blockSize) > kMaxGridX) {
+        return SIZE_MAX;
+    }
+    if (srcSize == 0 || context->hostTree.tableLog == 0) {
+        return 0;
+    }
+    if (canUseFastRootConstFlat1Encode(context->hostTree, blockSize)) {
+        return fastEncodeWorkspaceBytes(srcSize, blockSize);
+    }
+#if !defined(__HIPCC__)
+    if (canUseCooperativeEncode(*context, srcSize, blockSize, SIZE_MAX)) {
+        return cooperativeEncodeWorkspaceBytes(srcSize, blockSize);
+    }
+#endif
     return workspaceBytesFor(srcSize, blockSize);
 }
 
@@ -3057,15 +3145,32 @@ cudaError_t pivcoGpuEncodeAsync(
         return cudaErrorInvalidValue;
     }
     if (srcSize == 0) {
-        return cudaMemsetAsync(offsets_d, 0, sizeof(uint64_t), stream);
+        const cudaError_t err =
+                cudaMemsetAsync(offsets_d, 0, sizeof(uint64_t), stream);
+        if (err != cudaSuccess) {
+            return err;
+        }
+        return cudaMemsetAsync(totalSize_d, 0, sizeof(uint64_t), stream);
     }
     if (src_d == nullptr) {
         return cudaErrorInvalidValue;
     }
 
     if (context->hostTree.tableLog == 0) {
-        cudaError_t err =
-                cudaMemsetAsync(totalSize_d, 0, sizeof(uint64_t), stream);
+        // Validate symbols even when the encoded payload is empty.
+        const size_t validationBlocks = srcSize / 256 + (srcSize % 256 != 0);
+        const unsigned validationGrid = static_cast<unsigned>(
+                validationBlocks < 256 ? validationBlocks : 256);
+        validateConstantEncodeKernel<<<validationGrid, 256, 0, stream>>>(
+                static_cast<const uint8_t*>(src_d),
+                srcSize,
+                context->hostTree.rankToSymbol[0],
+                status_d);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            return err;
+        }
+        err = cudaMemsetAsync(totalSize_d, 0, sizeof(uint64_t), stream);
         if (err != cudaSuccess) {
             return err;
         }
@@ -3073,8 +3178,36 @@ cudaError_t pivcoGpuEncodeAsync(
                 offsets_d, 0, sizeof(uint64_t) * (numBlocks + 1), stream);
     }
 
-    if (dst_d == nullptr || workspace_d == nullptr
-        || workspaceBytes < workspaceBytesFor(srcSize, blockSize)) {
+    if (dst_d == nullptr || workspace_d == nullptr) {
+        return cudaErrorInvalidValue;
+    }
+
+#if !defined(__HIPCC__)
+    // Preserve the specialized three-symbol encoder. Scratch smaller than
+    // the cooperative batch pool retains the recursive path below.
+    if (!canUseFastRootConstFlat1Encode(context->hostTree, blockSize)
+        && canUseCooperativeEncode(
+                *context, srcSize, blockSize, workspaceBytes)) {
+        return launchCooperativeEncode(
+                context,
+                dst_d,
+                dstCapacity,
+                offsets_d,
+                src_d,
+                srcSize,
+                blockSize,
+                workspace_d,
+                status_d,
+                totalSize_d,
+                stream);
+    }
+#endif
+
+    const size_t required =
+            canUseFastRootConstFlat1Encode(context->hostTree, blockSize)
+            ? fastEncodeWorkspaceBytes(srcSize, blockSize)
+            : workspaceBytesFor(srcSize, blockSize);
+    if (required == SIZE_MAX || workspaceBytes < required) {
         return cudaErrorInvalidValue;
     }
 
@@ -3493,6 +3626,80 @@ cudaError_t pivcoGpuDecodeAsync(
     return cudaErrorNotSupported;
 }
 
+cudaError_t pivcoGpuEncodeWithResultAsync(
+        const PivCoGpuContext* context,
+        void* dst_d,
+        size_t dstCapacity,
+        uint64_t* offsets_d,
+        size_t offsetsCapacity,
+        const void* src_d,
+        size_t srcSize,
+        size_t blockSize,
+        void* workspace_d,
+        size_t workspaceBytes,
+        PivCoGpuEncodeResult* result_d,
+        cudaStream_t stream)
+{
+    if (context == nullptr || result_d == nullptr || offsets_d == nullptr
+        || reinterpret_cast<uintptr_t>(result_d) % alignof(PivCoGpuEncodeResult)
+                != 0
+        || blockSize == 0 || blockSize > PIVCO_GPU_MAX_BLOCK_SIZE
+        || addOverflows(srcSize, blockSize - 1)) {
+        return cudaErrorInvalidValue;
+    }
+    const size_t blocks = numBlocksFor(srcSize, blockSize);
+    if (blocks > kMaxGridX || offsetsCapacity < blocks + 1
+        || blocks + 1 > SIZE_MAX / sizeof(uint64_t)
+        || (srcSize != 0 && src_d == nullptr)) {
+        return cudaErrorInvalidValue;
+    }
+    const void* buffers[] = { src_d, dst_d, offsets_d, workspace_d };
+    const size_t sizes[]  = {
+        srcSize, dstCapacity, (blocks + 1) * sizeof(uint64_t), workspaceBytes
+    };
+    for (unsigned i = 0; i < 4; ++i) {
+        if (buffers[i] != nullptr
+            && encodeBuffersOverlap(
+                    result_d, sizeof(*result_d), buffers[i], sizes[i])) {
+            return cudaErrorInvalidValue;
+        }
+    }
+    const cudaError_t err =
+            cudaMemsetAsync(result_d, 0, sizeof(*result_d), stream);
+    if (err != cudaSuccess) {
+        return err;
+    }
+    return pivcoGpuEncodeAsync(
+            context,
+            dst_d,
+            dstCapacity,
+            offsets_d,
+            offsetsCapacity,
+            src_d,
+            srcSize,
+            blockSize,
+            workspace_d,
+            workspaceBytes,
+            &result_d->status,
+            &result_d->totalSize,
+            stream);
+}
+
+ZL_Report pivcoGpuEncodeResultReport(const PivCoGpuEncodeResult* result)
+{
+    if (result == nullptr) {
+        return ZL_returnError(ZL_ErrorCode_parameter_invalid);
+    }
+    const ZL_Report report = statusReport(result->status);
+    if (ZL_isError(report)) {
+        return report;
+    }
+    if (result->totalSize > SIZE_MAX) {
+        return ZL_returnError(ZL_ErrorCode_integerOverflow);
+    }
+    return ZL_returnValue(static_cast<size_t>(result->totalSize));
+}
+
 extern "C" ZL_Report pivcoGpuEncode(
         const PivCoGpuContext* context,
         void* dst_d,
@@ -3506,74 +3713,46 @@ extern "C" ZL_Report pivcoGpuEncode(
         size_t workspaceBytes,
         ZL_GPU_Stream stream)
 {
-    PivCoGpuStatus* status_d = nullptr;
-    uint64_t* totalSize_d    = nullptr;
-    cudaError_t err          = cudaMalloc(&status_d, sizeof(PivCoGpuStatus));
+    PivCoGpuEncodeResult* result_d = nullptr;
+    cudaError_t err                = cudaMalloc(&result_d, sizeof(*result_d));
     if (err != cudaSuccess) {
         return cudaReport(err);
     }
-    err = cudaMalloc(&totalSize_d, sizeof(uint64_t));
-    if (err != cudaSuccess) {
-        cudaFree(status_d);
-        return cudaReport(err);
-    }
-    err = cudaMemsetAsync(status_d, 0, sizeof(PivCoGpuStatus), stream);
-    if (err == cudaSuccess) {
-        err = cudaMemsetAsync(totalSize_d, 0, sizeof(uint64_t), stream);
-    }
-    if (err == cudaSuccess) {
-        err = pivcoGpuEncodeAsync(
-                context,
-                dst_d,
-                dstCapacity,
-                offsets_d,
-                offsetsCapacity,
-                src_d,
-                srcSize,
-                blockSize,
-                workspace_d,
-                workspaceBytes,
-                status_d,
-                totalSize_d,
-                reinterpret_cast<cudaStream_t>(stream));
-    }
-
-    PivCoGpuStatus status{};
-    uint64_t totalSize = 0;
+    const cudaStream_t cudaStream = reinterpret_cast<cudaStream_t>(stream);
+    err                           = pivcoGpuEncodeWithResultAsync(
+            context,
+            dst_d,
+            dstCapacity,
+            offsets_d,
+            offsetsCapacity,
+            src_d,
+            srcSize,
+            blockSize,
+            workspace_d,
+            workspaceBytes,
+            result_d,
+            cudaStream);
+    PivCoGpuEncodeResult result{};
     if (err == cudaSuccess) {
         err = cudaMemcpyAsync(
-                &status,
-                status_d,
-                sizeof(status),
+                &result,
+                result_d,
+                sizeof(result),
                 cudaMemcpyDeviceToHost,
-                reinterpret_cast<cudaStream_t>(stream));
+                cudaStream);
     }
+    // Also drain partially submitted work on an enqueue/copy error before
+    // releasing completion storage. Preserve the original error when present.
+    const cudaError_t sync = cudaStreamSynchronize(cudaStream);
     if (err == cudaSuccess) {
-        err = cudaMemcpyAsync(
-                &totalSize,
-                totalSize_d,
-                sizeof(totalSize),
-                cudaMemcpyDeviceToHost,
-                reinterpret_cast<cudaStream_t>(stream));
+        err = sync;
     }
+    const cudaError_t release = cudaFree(result_d);
     if (err == cudaSuccess) {
-        err = cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream));
+        err = release;
     }
-
-    cudaFree(totalSize_d);
-    cudaFree(status_d);
-
-    if (err != cudaSuccess) {
-        return cudaReport(err);
-    }
-    const ZL_Report statusResult = statusReport(status);
-    if (ZL_isError(statusResult)) {
-        return statusResult;
-    }
-    if (totalSize > SIZE_MAX) {
-        return ZL_returnError(ZL_ErrorCode_integerOverflow);
-    }
-    return ZL_returnValue(static_cast<size_t>(totalSize));
+    return err == cudaSuccess ? pivcoGpuEncodeResultReport(&result)
+                              : cudaReport(err);
 }
 
 extern "C" ZL_Report pivcoGpuDecode(

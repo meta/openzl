@@ -20,7 +20,7 @@ Ran on **NVIDIA A100 (SM 8.0, 80 GB)**.
 256 MiB expanded input, 64 KiB blocks, 15 iterations. Decode is timed with CUDA
 events over the decompressed bytes; bulk H2D/D2H transfers are excluded. Figures
 are the median decode throughput over the 15 iterations (GPU-clock variance is
-~±15% run-to-run).
+~Â±15% run-to-run).
 
 To reproduce, clone the upstream pivco-huffman repo for the real datasets
 (`extras/datasets`) and point `--dataset-dir` at that directory:
@@ -88,9 +88,10 @@ Decode has two throughput regimes:
   that schedule, then CUDA kernels process the tree node-by-node across all
   blocks. Real broad-tree files currently decode at ~100-190 GiB/s.
 
-Encode has a fast path for the narrow three-symbol shape and a
-correctness-oriented generic path that is much slower and is optimized for
-differential testing rather than peak throughput.
+Encode keeps the narrow three-symbol fast path and the correctness-oriented
+recursive fallback. Eligible generic blocks also have a bounded cooperative
+path. See [the measured encoder evidence](COOPERATIVE_ENCODER.md) for its
+supported sizes, workspace cost, timing scope and qualification limits.
 
 Decode throughput is measured over decompressed bytes with CUDA events and
 excludes bulk H2D/D2H transfers. See `BENCHMARKS.md` for the latest checked-in
@@ -258,7 +259,36 @@ timing prints on the cascade path for diagnostics. Both are off by default.
 
 ## Encode Strategy
 
-Encode has a generic path and a fast path.
+### Cooperative Encoder
+
+The cooperative CUDA path supports schedulable trees with tableLog from 1
+through 12 and 32 or 64 KiB blocks. Calls use stream-ordered batches of at most
+256 blocks, including a partial final block. The existing three-symbol encoder
+takes precedence. Unsupported trees, HIP and insufficient cooperative scratch
+retain the recursive fallback when its workspace requirement is satisfied.
+
+Each CTA partitions and packs one block using warp histograms and CUB scans.
+A device scan carries the previous batch endpoint into global offsets; a copy
+compacts each batch before the same scratch pool is reused. CPU wire bytes and
+offsets are preserved. No allocation or host stream fence is added internally.
+
+Cooperative scratch is approximately four times one batch's rounded input,
+plus context and per-block sizes. The context-free public query remains
+conservative: it also covers recursive whole-input scratch and can overallocate
+for a specialized tree or a large cooperative call. It is not a context-aware
+memory planner.
+
+The cooperative path rejects overlapping or misaligned buffers. The immutable
+host context and all storage must survive stream completion. Concurrent calls
+need disjoint mutable storage; reuse on another stream requires an event wait
+or synchronization. On failure, output and offsets are invalid and earlier
+batches may already have written bytes. HIP excludes CUB. CUDA architectures
+below SM70 retain scalar shared atomics, but require a supporting toolkit.
+
+This is a standalone contrib codec. It does not redirect OpenZL's production
+CPU codec or supply the graph/header/weight-stream integration for that route.
+
+### Existing Paths
 
 The generic encoder is the correctness/oracle implementation:
 
@@ -269,8 +299,8 @@ The generic encoder is the correctness/oracle implementation:
 3. `encodeEmitKernel` reruns the recursive stable partitions and emits the exact
    CPU preorder bitstream for each block.
 
-This generic path is intentionally simple and currently optimized for
-differential testing rather than peak throughput.
+This generic path remains the differential reference for unsupported shapes
+and workspace configurations.
 
 The optimized three-symbol path is selected for the same root-constant plus
 one-bit-leaf tree shape and block sizes from 1 KiB through 64 KiB. It is designed
@@ -292,7 +322,9 @@ produces byte-identical CPU wire output and offsets.
 
 Empty input produces an empty bitstream and a single zero offset. Constant-input
 contexts with `tableLog == 0` produce zero encoded bytes and repeated zero
-offsets.
+offsets. Constant encoding rejects absent symbols; empty async calls clear
+the total-size result. The CPU-wire regression covers the full-block terminal
+rank overflow on both chunk and cascade decode paths.
 
 ## CPU Block Indexer
 
@@ -315,23 +347,26 @@ The GPU tests compare:
 - the optimized fast path, including a partial final block
 - scheduled decode across mixed node kinds (flat, vector/vector,
   constant/vector, constant/constant)
+- cooperative tails, maximum grid, legacy workspace and fallback behavior
+- concurrent streams, poisoned workspace reuse, and empty async output
+- independent CPU-wire decoding at the full-block rank boundary
 
-The unit tests use small inputs, so they exercise the fast paths and the
-chunk-in-shared decoder; the scheduled cascade is exercised by the large-input
-benchmark.
+The tests exercise fast paths, the chunk-in-shared decoder, and larger inputs
+that select the scheduled cascade. The benchmark provides separate timings.
+The [standalone CMake recipe](COOPERATIVE_ENCODER.md#reproduce) builds these
+tests with CMake and registers both decoder modes.
 
-Run the unit tests with:
+Run both decoder modes through the standalone CTest registration:
 
-```bash
-buck test --local-only @fbcode//mode/dev-nosan fbcode//openzl/dev/contrib/pivco-huffman/gpu:pivco_block_index_test fbcode//openzl/dev/contrib/pivco-huffman/gpu:pivco_gpu_test
+```sh
+ctest --test-dir build/pivco --output-on-failure
 ```
 
 `PivCoGpuBench.cpp` reports CUDA-event kernel timing separately from host H2D,
 D2H, and wall-clock preparation. Bulk input/output transfers are not included in
 the `decode_*` or `encode_*` throughput numbers.
 
-The default benchmark expands every case to a 1 GiB device-resident input and
-uses 64 KiB blocks. It runs:
+The default benchmark tests 4 MiB per case with 64 KiB blocks. It runs:
 
 - every synthetic distribution (generated in-process; no input files needed)
 - every regular file in the directory passed via `--dataset-dir`
@@ -348,9 +383,9 @@ buck run --local-only @fbcode//mode/opt fbcode//openzl/dev/contrib/pivco-huffman
     --dataset-dir=pivco-huffman/extras/datasets
 ```
 
-Real files and generated synthetic bases are repeated to the requested benchmark
-size. Dataset source bytes must be larger than the block size, so every measured
-case spans at least two PivCo blocks before repetition.
+Real files and generated synthetic bases are repeated or truncated to the
+requested benchmark size. Dataset source bytes must be larger than the block
+size, so every measured case spans at least two PivCo blocks before repetition.
 
 Useful benchmark options (all also take `--dataset-dir=<checkout>/extras/datasets`):
 
@@ -360,3 +395,13 @@ buck run --local-only @fbcode//mode/opt fbcode//openzl/dev/contrib/pivco-huffman
 ```
 
 See `BENCHMARKS.md` for the latest checked-in result snapshot.
+
+The benchmark leaves the CUDA runtime stack limit unchanged by default. Use
+`--stack-limit=65536` when reproducing the recursive baseline.
+The context-aware workspace query sizes the selected encode path; the original
+query remains a conservative context-independent budget.
+
+CUDA callers including `pivco_gpu.cuh` can reuse a `PivCoGpuEncodeResult` device buffer with
+`pivcoGpuEncodeWithResultAsync`. Copy it to pinned host storage and record a
+stream event; inspect `pivcoGpuEncodeResultReport` after the event completes.
+The caller owns the buffers and stream ordering.
