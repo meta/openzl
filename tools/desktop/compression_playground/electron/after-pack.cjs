@@ -31,19 +31,24 @@ function electronBinaryPath({appOutDir, electronPlatformName, packager}) {
 
 /**
  * The app excludes node_modules, but main.cjs (inside the asar) and the worker
- * (in resources/native) require zod at runtime. Node's module lookup from
+ * (in resources/native) require zod at runtime, and the worker requires
+ * iconv-lite, which requires safer-buffer. Node's module lookup from
  * either place reaches resources/node_modules.
  *
  * @param {AfterPackContext} context
  */
 async function copyRuntimeDependencies(context) {
+  const nodeModules = path.join(context.packager.getResourcesDir(context.appOutDir), 'node_modules');
   const zod = path.dirname(require.resolve('zod/package.json'));
   const source = path.join(zod, 'src');
-  await fs.cp(zod, path.join(context.packager.getResourcesDir(context.appOutDir), 'node_modules', 'zod'), {
+  await fs.cp(zod, path.join(nodeModules, 'zod'), {
     recursive: true,
     // TypeScript sources are not loaded at runtime.
     filter: (file) => file !== source && !file.startsWith(`${source}${path.sep}`),
   });
+  for (const name of ['iconv-lite', 'safer-buffer']) {
+    await fs.cp(path.dirname(require.resolve(`${name}/package.json`)), path.join(nodeModules, name), {recursive: true});
+  }
 }
 
 /** @param {AfterPackContext} context */
