@@ -6,7 +6,7 @@ import {getOpenZlProfiles} from '../compressors.ts';
 import ConfigureRunCard from './ConfigureRunCard.tsx';
 import RunBenchmarkCard from './RunBenchmarkCard.tsx';
 import UploadCard from './UploadCard.tsx';
-import type {RunConfig, RunState} from '../benchmarkTypes.ts';
+import {isRunInProgress, type RunConfig, type RunState} from '../benchmarkTypes.ts';
 import type {CompressorRows} from '../useCompressorRows.ts';
 
 interface SetupColumnProps {
@@ -37,7 +37,7 @@ export default function SetupColumn({
   const [profilesReady, setProfilesReady] = useState(getOpenZlProfiles().length > 0);
   return (
     <VStack gap="20px" width={{base: '100%', lg: '520px'}} flexShrink={0} align="stretch">
-      <UploadCard file={file} onFileChange={onFileChange} />
+      <UploadCard file={file} onFileChange={onFileChange} disabled={isRunInProgress(runState)} />
       <ConfigureRunCard
         compressors={compressors}
         iterations={iterations}
