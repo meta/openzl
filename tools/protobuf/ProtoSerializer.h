@@ -14,6 +14,7 @@ class ProtoSerializer {
    public:
     ProtoSerializer()
     {
+        compressor_.setParameter(CParam::FormatVersion, ZL_MAX_FORMAT_VERSION);
         auto graphid = ZL_Protobuf_registerGraph(compressor_.get());
         compressor_.selectStartingGraph(graphid);
 
