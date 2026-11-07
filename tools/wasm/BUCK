@@ -96,7 +96,7 @@ fb_native.platform(
         # js/wasm_api.js assumes 8-byte pointers, and training uses threads
         "ovr_config//features/wasm:memory64",
         "ovr_config//features/wasm:threads",
-        "ovr_config//os/version/emscripten:4.0.19",
+        "ovr_config//os/version/emscripten:emscripten-version[4.0.19]",
     ],
     deps = [
         "ovr_config//platform/wasm:emcc",
