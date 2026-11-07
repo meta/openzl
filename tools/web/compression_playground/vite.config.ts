@@ -128,9 +128,11 @@ export default {
   // fallback, so it reads as a hang rather than a 404.
   optimizeDeps: {exclude: ['@bokuweb/zstd-wasm']},
   server: {
-    // tools/wasm/js/ is a sibling of the Yarn workspace root, so the dev
-    // server's default fs.allow refuses it and the wasm URL 403s.
-    fs: {allow: ['../..']},
+    // tools/wasm/js/ is a sibling of the Yarn workspace root, and the sample is
+    // under examples/ at the repository root, so the dev server's default
+    // fs.allow refuses both and their URLs 403. Only the sample's directory is
+    // added, not the whole repository.
+    fs: {allow: ['../..', '../../../examples/getting_started/sample_inputs']},
     // The OpenZL module is built with pthreads, which needs SharedArrayBuffer,
     // which browsers hand only to a cross-origin isolated document. The
     // deployed site cannot send these -- GitHub Pages serves fixed headers --
