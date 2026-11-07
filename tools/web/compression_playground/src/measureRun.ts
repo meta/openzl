@@ -142,7 +142,7 @@ export async function measureRun(config: RunConfig, post: Emit): Promise<void> {
  * happened to be running. Compression is bandwidth-bound, so this is not a
  * small effect, and the numbers stop being reproducible.
  *
- * What it costs is bounded: on the 5 MB sample the twelve level jobs come to
+ * What it costs is bounded: on a 5 MB input the twelve level jobs come to
  * about 11 seconds in total, against minutes for one training job, which is
  * not something running them side by side would help with.
  */

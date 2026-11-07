@@ -176,7 +176,7 @@ export default function ResultsPanel({runState}: ResultsPanelProps) {
                   No results yet
                 </Text>
                 <Text color="pg.secondary" fontSize="14px" lineHeight="1.4" m={0}>
-                  Select your data to compress or hit &ldquo;Try a 5 MB sample&rdquo; to see the playground work.
+                  Select your data to compress or hit &ldquo;Try a sample&rdquo; to see the playground work.
                 </Text>
               </VStack>
             </Box>
