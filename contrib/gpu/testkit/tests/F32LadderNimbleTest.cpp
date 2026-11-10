@@ -14,8 +14,8 @@ namespace {
 class F32LadderNimbleTest : public ::testing::TestWithParam<const LadderStep*> {
 };
 
-// The ladder's graphs come from a census of frames that Nimble's numeric
-// graph wrote. This test checks that compressLikeNimble() still writes each
+// Each ladder step's graph is one that Nimble's numeric graph writes. This
+// test checks that compressLikeNimble() still writes each
 // step's graph for the step's workload, so the builders, the expected text,
 // and Nimble agree. A failure here means that OpenZL's selectors or the
 // workload changed, not that compressStep() broke. Nimble's entropy graphs
