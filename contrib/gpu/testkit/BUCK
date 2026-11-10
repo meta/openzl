@@ -19,9 +19,12 @@ cpp_library(
         "float_parses.cpp",
         "frame_factory.cpp",
         "frame_verifier.cpp",
+        "graph_builders.cpp",
         "multichunk_frame.cpp",
         "nimble_graph.cpp",
         "nimble_workloads.cpp",
+        "parse_plan.cpp",
+        "zstd_workloads.cpp",
     ],
     headers = relative_headers([
         "bytes.h",
@@ -29,9 +32,12 @@ cpp_library(
         "float_parses.h",
         "frame_factory.h",
         "frame_verifier.h",
+        "graph_builders.h",
         "multichunk_frame.h",
         "nimble_graph.h",
         "nimble_workloads.h",
+        "parse_plan.h",
+        "zstd_workloads.h",
     ])
     | {
         header: header
@@ -41,9 +47,12 @@ cpp_library(
             "float_parses.h",
             "frame_factory.h",
             "frame_verifier.h",
+            "graph_builders.h",
             "multichunk_frame.h",
             "nimble_graph.h",
             "nimble_workloads.h",
+            "parse_plan.h",
+            "zstd_workloads.h",
         ]
     },
     header_namespace = "",
@@ -62,9 +71,12 @@ cpp_library(
         "float_parses.h",
         "frame_factory.h",
         "frame_verifier.h",
+        "graph_builders.h",
         "multichunk_frame.h",
         "nimble_graph.h",
         "nimble_workloads.h",
+        "parse_plan.h",
+        "zstd_workloads.h",
     ]),
     header_namespace = "",
     exported_deps = [":testkit"],
@@ -148,8 +160,8 @@ cpp_unittest(
 
 # Checks that Nimble's numeric graph still writes each ladder step's graph. Core
 # selector heuristics choose that graph, so a heuristic change in core can fail
-# this test with nothing wrong. CI skips it. Run it by hand when the ladder is
-# regenerated or the census changes.
+# this test with nothing wrong. CI skips it. Run it by hand when the ladder
+# changes.
 cpp_unittest(
     # @autodeps-skip
     name = "f32_ladder_nimble_test",
@@ -213,6 +225,20 @@ cpp_unittest(
         "../../..:zstronglib",
         "../../../cpp:openzl_cpp",
         "fbsource//third-party/googletest:gtest",
+        ":testkit",
+    ],
+)
+
+cpp_unittest(
+    # @autodeps-skip
+    name = "zstd_workloads_test",
+    srcs = ["tests/ZstdWorkloadsTest.cpp"],
+    network_access = network_access_utils.none(),
+    supports_static_listing = False,
+    deps = [
+        "../../../cpp:openzl_cpp",
+        "fbsource//third-party/googletest:gtest",
+        ":f32_ladder_test_util",
         ":testkit",
     ],
 )
