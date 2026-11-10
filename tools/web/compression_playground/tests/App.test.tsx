@@ -7,6 +7,7 @@ import {act, render, screen, cleanup, fireEvent, within, waitFor, type RenderOpt
 import {ChakraProvider} from '@chakra-ui/react';
 import React from 'react';
 import App from '../src/App.tsx';
+import {SAMPLE_NAME} from '../src/fetchSample.ts';
 import {playgroundSystem} from '../src/theme.ts';
 import * as benchmark from '../src/runBenchmark.ts';
 import {setWasmProfiles} from '../src/wasmProfiles.ts';
@@ -121,6 +122,8 @@ describe('Compression Playground', () => {
       expect(run).toHaveAttribute('aria-disabled', 'true');
     });
     expect(run).toHaveAccessibleDescription('Pick at least one level for row 3.');
+    // The sample needs no file, but it is still a run.
+    expect(screen.getByRole('button', {name: 'Try a sample'})).toBeDisabled();
 
     fireEvent.click(levels.getByRole('checkbox', {name: 'Level 1'}));
     await waitFor(() => {
@@ -129,11 +132,138 @@ describe('Compression Playground', () => {
     expect(run).not.toHaveAttribute('aria-describedby');
   });
 
+  it('downloads the sample when it is asked for and runs it, leaving the chosen file alone', async () => {
+    const bytes = new Uint8Array(4000).fill(7);
+    const fetchSample = vi.fn<typeof fetch>(() => Promise.resolve(new Response(bytes)));
+    vi.stubGlobal('fetch', fetchSample);
+    const runBenchmark = vi.spyOn(benchmark, 'runBenchmark').mockImplementation(() => undefined);
+    renderWithPlaygroundTheme(<App />);
+    const sample = await screen.findByRole('button', {name: 'Try a sample'});
+    await waitFor(() => {
+      expect(sample).toBeEnabled();
+    });
+    fireEvent.change(screen.getByLabelText(/browse your computer/), {
+      target: {files: [new File(['x'], 'data.bin')]},
+    });
+    expect(fetchSample).not.toHaveBeenCalled();
+
+    fireEvent.click(sample);
+
+    await waitFor(() => {
+      expect(runBenchmark).toHaveBeenCalledTimes(1);
+    });
+    expect(fetchSample).toHaveBeenCalledTimes(1);
+    const input = runBenchmark.mock.calls[0][0].input;
+    expect(input.name).toBe(SAMPLE_NAME);
+    expect(input.size).toBe(bytes.length);
+    // The chosen file is still the one Run takes.
+    const dropzone = within(screen.getByTestId('upload-dropzone'));
+    expect(dropzone.getByText('data.bin')).toBeInTheDocument();
+    expect(dropzone.queryByText(SAMPLE_NAME)).not.toBeInTheDocument();
+  });
+
+  it('reports a sample that fails to download, rather than running without it', async () => {
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(null, {status: 404, statusText: 'Not Found'})));
+    const runBenchmark = vi.spyOn(benchmark, 'runBenchmark').mockImplementation(() => undefined);
+    renderWithPlaygroundTheme(<App />);
+    const sample = await screen.findByRole('button', {name: 'Try a sample'});
+    await waitFor(() => {
+      expect(sample).toBeEnabled();
+    });
+
+    fireEvent.click(sample);
+
+    expect(await screen.findByText(/Could not download the sample: 404 Not Found/)).toBeInTheDocument();
+    expect(runBenchmark).not.toHaveBeenCalled();
+    expect(sample).toBeEnabled();
+    expect(screen.getByLabelText(/browse your computer/)).toBeEnabled();
+  });
+
+  it('locks the file picker while the sample downloads', async () => {
+    let finishDownload: (response: Response) => void = () => undefined;
+    vi.stubGlobal(
+      'fetch',
+      () =>
+        new Promise<Response>((resolve) => {
+          finishDownload = resolve;
+        }),
+    );
+    vi.spyOn(benchmark, 'runBenchmark').mockImplementation(() => undefined);
+    renderWithPlaygroundTheme(<App />);
+    const sample = await screen.findByRole('button', {name: 'Try a sample'});
+    await waitFor(() => {
+      expect(sample).toBeEnabled();
+    });
+    const picker = screen.getByLabelText(/browse your computer/);
+    expect(picker).toBeEnabled();
+
+    fireEvent.click(sample);
+
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(picker).toBeDisabled();
+    await act(async () => {
+      finishDownload(new Response(new Uint8Array(4000)));
+      await Promise.resolve();
+    });
+
+    expect(within(screen.getByTestId('upload-dropzone')).getByText('Drag & drop a file here')).toBeInTheDocument();
+  });
+
+  it('runs the sample with the rows as they are once it has downloaded', async () => {
+    let finishDownload: (response: Response) => void = () => undefined;
+    vi.stubGlobal(
+      'fetch',
+      () =>
+        new Promise<Response>((resolve) => {
+          finishDownload = resolve;
+        }),
+    );
+    const runBenchmark = vi.spyOn(benchmark, 'runBenchmark').mockImplementation(() => undefined);
+    renderWithPlaygroundTheme(<App />);
+    const sample = await screen.findByRole('button', {name: 'Try a sample'});
+    await waitFor(() => {
+      expect(sample).toBeEnabled();
+    });
+    fireEvent.change(screen.getByLabelText(/browse your computer/), {
+      target: {files: [new File(['x'], 'data.bin')]},
+    });
+
+    fireEvent.click(sample);
+    const trigger = screen.getByRole('button', {name: /, row 3$/});
+    fireEvent.click(trigger);
+    const levels = within(
+      await waitFor(() => document.getElementById(trigger.getAttribute('aria-controls') ?? '') as HTMLElement),
+    );
+    fireEvent.click(levels.getByText('None'));
+    await act(async () => {
+      finishDownload(new Response(new Uint8Array(4000)));
+      await Promise.resolve();
+    });
+
+    // Emptied during the download, the row holds the run back as it would Run.
+    const run = screen.getByRole('button', {name: 'Run benchmark'});
+    await waitFor(() => {
+      expect(run).toHaveAccessibleDescription('Pick at least one level for row 3.');
+    });
+    expect(runBenchmark).not.toHaveBeenCalled();
+    expect(within(screen.getByTestId('upload-dropzone')).getByText('data.bin')).toBeInTheDocument();
+
+    fireEvent.click(levels.getByRole('checkbox', {name: 'Level 1'}));
+    await waitFor(() => {
+      expect(run).not.toHaveAttribute('aria-disabled');
+    });
+    fireEvent.click(run);
+    expect(runBenchmark).toHaveBeenCalledTimes(1);
+    const config = runBenchmark.mock.calls[0][0];
+    expect(config.input.name).toBe('data.bin');
+    expect(config.compressors[2].levels).toEqual([1]);
+  });
+
   it('renders the static Results panel', () => {
     renderWithPlaygroundTheme(<App />);
     expect(screen.getByRole('heading', {level: 2, name: 'Results'})).toBeInTheDocument();
     expect(screen.getByText('No results yet')).toBeInTheDocument();
-    expect(screen.getByText(/Try a 5 MB sample.*to see the playground work/)).toBeInTheDocument();
+    expect(screen.getByText(/Try a sample.*to see the playground work/)).toBeInTheDocument();
     expect(screen.getByRole('heading', {level: 3, name: 'How it works'})).toBeInTheDocument();
     expect(screen.getByText('Choose your data.')).toBeInTheDocument();
     expect(screen.getByRole('heading', {level: 3, name: 'Reading the results'})).toBeInTheDocument();

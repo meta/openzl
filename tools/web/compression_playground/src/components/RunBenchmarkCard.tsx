@@ -1,7 +1,7 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import {useId} from 'react';
-import {Box, Button, Portal, Text, Tooltip, VStack, chakra, useSlotRecipe} from '@chakra-ui/react';
+import {Box, Button, Link, Portal, Text, Tooltip, VStack, chakra, useSlotRecipe} from '@chakra-ui/react';
 import {LuCircleAlert, LuCircleCheck, LuLoaderCircle, LuPlay} from 'react-icons/lu';
 import StepCard from './StepCard.tsx';
 import {isRunInProgress, type RunConfig, type RunState} from '../benchmarkTypes.ts';
@@ -14,7 +14,7 @@ import {formatBytes, runSummary, type RunSummary} from '../measurements.ts';
  */
 function progressOf(runState: RunState): {fraction: number; label: string} | null {
   if (runState.status === 'loading') {
-    return {fraction: 0, label: 'Loading the OpenZL module…'};
+    return {fraction: 0, label: 'Loading…'};
   }
   if (runState.status !== 'running') {
     return null;
@@ -39,6 +39,11 @@ function doneLine({srcSize, succeeded, failed}: RunSummary): string {
   const counts = `${String(succeeded)} succeeded, ${String(failed)} failed`;
   return size === null ? `Done — ${counts}` : `Done — ${size} · ${counts}`;
 }
+
+/** What the sample is, and where it comes from. */
+const SAMPLE_DESCRIPTION = 'Part of the SAO star catalog, from the';
+const SAMPLE_CORPUS = 'Silesia compression corpus';
+const SAMPLE_CORPUS_URL = 'https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia';
 
 const Spinner = chakra(LuLoaderCircle, {
   base: {animation: 'spin 1s linear infinite'},
@@ -68,6 +73,7 @@ export default function RunBenchmarkCard({
   // is nothing for the user to fix.
   const blockedReason = !canRun && !isBusy && runBlockers.length > 0 ? runBlockers.join(' ') : null;
   const blockedReasonId = useId();
+  const sampleDescriptionId = useId();
   const progress = progressOf(runState);
   const summary = runSummary(runState);
 
@@ -118,27 +124,53 @@ export default function RunBenchmarkCard({
             </Tooltip.Positioner>
           </Portal>
         </Tooltip.Root>
-        <Button
-          type="button"
-          flex="1"
-          minW={0}
-          variant="outline"
-          bg="pg.surface"
-          borderColor="pg.border"
-          color="pg.secondary"
-          fontSize="14px"
-          fontWeight="semibold"
-          px="16px"
-          py="12px"
-          borderRadius="8px"
-          _hover={{bg: 'pg.canvas'}}
-          disabled={!canTrySample}
-          onClick={onTrySample ?? undefined}>
-          Try a 5 MB sample
-        </Button>
+        <Tooltip.Root openDelay={200} interactive positioning={{placement: 'top', gutter: 8}}>
+          <Tooltip.Trigger asChild>
+            <Button
+              type="button"
+              flex="1"
+              minW={0}
+              variant="outline"
+              bg="pg.surface"
+              borderColor="pg.border"
+              color="pg.secondary"
+              fontSize="14px"
+              fontWeight="semibold"
+              px="16px"
+              py="12px"
+              borderRadius="8px"
+              _hover={{bg: 'pg.canvas'}}
+              disabled={!canTrySample}
+              aria-describedby={sampleDescriptionId}
+              onClick={onTrySample ?? undefined}>
+              Try a sample
+            </Button>
+          </Tooltip.Trigger>
+          <Portal>
+            <Tooltip.Positioner>
+              <Tooltip.Content css={helperTooltip.content}>
+                <Tooltip.Arrow>
+                  <Tooltip.ArrowTip css={helperTooltip.arrowTip} />
+                </Tooltip.Arrow>
+                {SAMPLE_DESCRIPTION}{' '}
+                <Link
+                  href={SAMPLE_CORPUS_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  color="inherit"
+                  textDecoration="underline">
+                  {SAMPLE_CORPUS}
+                </Link>
+              </Tooltip.Content>
+            </Tooltip.Positioner>
+          </Portal>
+        </Tooltip.Root>
       </Box>
-      {/* The tooltip only opens on hover or focus, so the reason is also kept
+      {/* The tooltips only open on hover or focus, so what they say is also kept
           here for a screen reader to announce with the button. */}
+      <Box id={sampleDescriptionId} srOnly>
+        {`${SAMPLE_DESCRIPTION} ${SAMPLE_CORPUS}`}
+      </Box>
       {blockedReason !== null && (
         <Box id={blockedReasonId} srOnly>
           {blockedReason}
