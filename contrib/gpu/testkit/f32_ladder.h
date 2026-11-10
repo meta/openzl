@@ -21,15 +21,15 @@
 // Each step is a decode graph and a workload. compressStep() writes the
 // workload's frames with a graph that the step builds from OpenZL nodes, so
 // no selector runs and the frames take the step's graph for every seed and
-// standard library. The workload brings each codec's share of the input and
-// its ratio close to the census, for benchmarks. It does not choose the
-// graph.
+// standard library. The workload sets each codec's share of the input and
+// its ratio, for benchmarks. It does not choose the graph.
 
 namespace openzl::gpu::testkit {
 
 struct LadderStep {
     // "f32/NN-..." with the step number and what the step adds to the graphs
-    // before it, or "f32/..." for a workload outside the ladder.
+    // before it, or "<type>/..." for a workload outside the ladder, such as
+    // "f32/indexfieldlz" or "zstd/u32-1k".
     std::string name;
     WorkloadSpec spec;
     size_t frameBytes;
@@ -43,7 +43,8 @@ struct LadderStep {
     // this step's values as one Trivial stream that OpenZL compresses. With
     // false, it picks another encoding (Varint, Dictionary, or Constant), so
     // an end-to-end Nimble benchmark must build this frame inside that
-    // encoding or skip the step.
+    // encoding or skip the step. False also marks a frame whose graph Nimble
+    // never writes, such as plain zstd, which such a benchmark must skip.
     bool trivialInNimble = true;
 };
 
@@ -57,9 +58,12 @@ std::string compressStep(const LadderStep& step, std::string_view data);
 const std::vector<LadderStep>& f32Ladder();
 
 // Workloads outside the ladder. Their graphs need only the ladder's codecs, so
-// they are not steps, but benchmarks run them next to the steps. The one
-// workload, "f32/indexfieldlz", tokenizes the values, then runs field_lz on
-// the delta-coded alphabet and on the 2-byte indices.
+// they are not steps, but benchmarks run them next to the steps.
+// - "f32/indexfieldlz" tokenizes the values, then runs field_lz on the
+//   delta-coded alphabet and on the 2-byte indices.
+// - "f32/bitpacktokens-storedcodes", "f32/splithuffman-fsecodes", and
+//   "f32/splithuffman-tokenizetokens" write float32 graphs that no ladder
+//   step writes.
 const std::vector<LadderStep>& f32ExtraWorkloads();
 
 } // namespace openzl::gpu::testkit
