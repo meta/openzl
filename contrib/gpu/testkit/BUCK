@@ -22,6 +22,7 @@ cpp_library(
         "multichunk_frame.cpp",
         "nimble_graph.cpp",
         "nimble_workloads.cpp",
+        "zstd_workloads.cpp",
     ],
     headers = relative_headers([
         "bytes.h",
@@ -32,6 +33,7 @@ cpp_library(
         "multichunk_frame.h",
         "nimble_graph.h",
         "nimble_workloads.h",
+        "zstd_workloads.h",
     ])
     | {
         header: header
@@ -44,6 +46,7 @@ cpp_library(
             "multichunk_frame.h",
             "nimble_graph.h",
             "nimble_workloads.h",
+            "zstd_workloads.h",
         ]
     },
     header_namespace = "",
@@ -65,6 +68,7 @@ cpp_library(
         "multichunk_frame.h",
         "nimble_graph.h",
         "nimble_workloads.h",
+        "zstd_workloads.h",
     ]),
     header_namespace = "",
     exported_deps = [":testkit"],
@@ -213,6 +217,20 @@ cpp_unittest(
         "../../..:zstronglib",
         "../../../cpp:openzl_cpp",
         "fbsource//third-party/googletest:gtest",
+        ":testkit",
+    ],
+)
+
+cpp_unittest(
+    # @autodeps-skip
+    name = "zstd_workloads_test",
+    srcs = ["tests/ZstdWorkloadsTest.cpp"],
+    network_access = network_access_utils.none(),
+    supports_static_listing = False,
+    deps = [
+        "../../../cpp:openzl_cpp",
+        "fbsource//third-party/googletest:gtest",
+        ":f32_ladder_test_util",
         ":testkit",
     ],
 )

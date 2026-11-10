@@ -28,7 +28,8 @@ namespace openzl::gpu::testkit {
 
 struct LadderStep {
     // "f32/NN-..." with the step number and what the step adds to the graphs
-    // before it, or "f32/..." for a workload outside the ladder.
+    // before it, or "<type>/..." for a workload outside the ladder, such as
+    // "f32/indexfieldlz" or "zstd/u32-1k".
     std::string name;
     WorkloadSpec spec;
     size_t frameBytes;
@@ -42,7 +43,8 @@ struct LadderStep {
     // this step's values as one Trivial stream that OpenZL compresses. With
     // false, it picks another encoding (Varint, Dictionary, or Constant), so
     // an end-to-end Nimble benchmark must build this frame inside that
-    // encoding or skip the step.
+    // encoding or skip the step. False also marks a frame whose graph Nimble
+    // never writes, such as plain zstd, which such a benchmark must skip.
     bool trivialInNimble = true;
 };
 
