@@ -148,8 +148,8 @@ cpp_unittest(
 
 # Checks that Nimble's numeric graph still writes each ladder step's graph. Core
 # selector heuristics choose that graph, so a heuristic change in core can fail
-# this test with nothing wrong. CI skips it. Run it by hand when the ladder is
-# regenerated or the census changes.
+# this test with nothing wrong. CI skips it. Run it by hand when the ladder
+# changes.
 cpp_unittest(
     # @autodeps-skip
     name = "f32_ladder_nimble_test",

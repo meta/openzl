@@ -21,9 +21,8 @@
 // Each step is a decode graph and a workload. compressStep() writes the
 // workload's frames with a graph that the step builds from OpenZL nodes, so
 // no selector runs and the frames take the step's graph for every seed and
-// standard library. The workload brings each codec's share of the input and
-// its ratio close to the census, for benchmarks. It does not choose the
-// graph.
+// standard library. The workload sets each codec's share of the input and
+// its ratio, for benchmarks. It does not choose the graph.
 
 namespace openzl::gpu::testkit {
 
@@ -57,9 +56,12 @@ std::string compressStep(const LadderStep& step, std::string_view data);
 const std::vector<LadderStep>& f32Ladder();
 
 // Workloads outside the ladder. Their graphs need only the ladder's codecs, so
-// they are not steps, but benchmarks run them next to the steps. The one
-// workload, "f32/indexfieldlz", tokenizes the values, then runs field_lz on
-// the delta-coded alphabet and on the 2-byte indices.
+// they are not steps, but benchmarks run them next to the steps.
+// - "f32/indexfieldlz" tokenizes the values, then runs field_lz on the
+//   delta-coded alphabet and on the 2-byte indices.
+// - "f32/bitpacktokens-storedcodes", "f32/splithuffman-fsecodes", and
+//   "f32/splithuffman-tokenizetokens" write float32 graphs that no ladder
+//   step writes.
 const std::vector<LadderStep>& f32ExtraWorkloads();
 
 } // namespace openzl::gpu::testkit
