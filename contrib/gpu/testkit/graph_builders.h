@@ -27,6 +27,9 @@ openzl::GraphID node(
 // 9:b(next): the frame's values as 4-byte numbers.
 openzl::GraphID numeric32(openzl::Compressor& c, openzl::GraphID next);
 
+// 9:b(next): the frame's values as 8-byte numbers.
+openzl::GraphID numeric64(openzl::Compressor& c, openzl::GraphID next);
+
 // 10:nN(next)
 openzl::GraphID numToSerial(openzl::Compressor& c, openzl::GraphID next);
 

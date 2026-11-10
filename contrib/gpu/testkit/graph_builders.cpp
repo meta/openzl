@@ -52,6 +52,11 @@ GraphID numeric32(Compressor& c, GraphID next)
     return node(c, ZL_NODE_CONVERT_SERIAL_TO_NUM_LE32, { next });
 }
 
+GraphID numeric64(Compressor& c, GraphID next)
+{
+    return node(c, ZL_NODE_CONVERT_SERIAL_TO_NUM_LE64, { next });
+}
+
 GraphID numToSerial(Compressor& c, GraphID next)
 {
     return node(c, ZL_NODE_CONVERT_NUM_TO_SERIAL_LE, { next });

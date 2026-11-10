@@ -10,8 +10,8 @@
 
 // Planned field_lz parses. A plan places literal slots, runs of repeats, and
 // copies of earlier values in a frame, so field_lz finds the matches that the
-// plan places. writeFloats() uses the plans, the random draws, and the byte
-// model below.
+// plan places. The float and integer writers share the plans, the random
+// draws, and the byte model below.
 
 namespace openzl::gpu::testkit {
 
@@ -20,7 +20,8 @@ namespace openzl::gpu::testkit {
 //   encodes them as repeat matches.
 // - Up to `copies` copies of earlier values. field_lz encodes them as
 //   matches with explicit offsets, except a copy from distance 1, which
-//   repeats a value. A copy is `copyLength` values long.
+//   repeats a value. A copy is `copyLength` values long, or draws its length
+//   from [copyLength, maxCopyLength] if maxCopyLength is larger.
 // The plan places each run and copy at a random free position. It drops a
 // run or copy that collides 100 times in a row, so a dense plan gets fewer
 // matches on some frames.
@@ -34,6 +35,7 @@ struct ParsePlan {
     uint32_t copyLength      = 1;
     uint32_t copyOffsetCodes = 0;
     uint32_t minCopyDistance = 0;
+    uint32_t maxCopyLength   = 0;
 };
 
 enum class ParseSlot : uint8_t { literal, repeat, copyStart, copyRest };
@@ -55,6 +57,17 @@ size_t inOctave(std::mt19937_64& rng, size_t log2);
 // Returns 0 with probability 1 - move. Otherwise returns
 // 1 + min(geometric(grow), 64) with a random sign.
 int signedStep(std::mt19937_64& rng, double move, double grow);
+
+// Draws an index below `n`, with weight 1/(k+1) for index k.
+template <typename T>
+std::discrete_distribution<T> zipfDistribution(size_t n)
+{
+    std::vector<double> weights(n);
+    for (size_t k = 0; k < n; ++k) {
+        weights[k] = 1.0 / static_cast<double>(k + 1);
+    }
+    return std::discrete_distribution<T>(weights.begin(), weights.end());
+}
 
 // One byte stream drawn in 8-byte windows. A window is one of `patterns`
 // patterns, or skewed bytes: one of 16 common values with some probability,

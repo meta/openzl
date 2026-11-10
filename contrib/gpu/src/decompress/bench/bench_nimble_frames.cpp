@@ -45,6 +45,7 @@
 
 #include "contrib/gpu/testkit/f32_ladder.h"
 #include "contrib/gpu/testkit/nimble_workloads.h"
+#include "contrib/gpu/testkit/u64_workloads.h"
 #include "contrib/gpu/testkit/zstd_workloads.h"
 #include "openzl/openzl.hpp"
 #include "tools/arg/arg_parser.h"
@@ -75,13 +76,15 @@ struct Options {
     std::vector<size_t> poolSlots  = { 1, 4, 16, 64 };
 };
 
-// The ladder steps, then the extra workloads, then the zstd workloads.
+// The ladder steps, then the extra workloads, the zstd workloads, and the
+// 64-bit workloads.
 const std::vector<testkit::LadderStep>& workloads()
 {
     static const std::vector<testkit::LadderStep> all = [] {
         std::vector<testkit::LadderStep> list = testkit::f32Ladder();
-        for (const auto* more :
-             { &testkit::f32ExtraWorkloads(), &testkit::zstdWorkloads() }) {
+        for (const auto* more : { &testkit::f32ExtraWorkloads(),
+                                  &testkit::zstdWorkloads(),
+                                  &testkit::u64Workloads() }) {
             list.insert(list.end(), more->begin(), more->end());
         }
         return list;
@@ -173,7 +176,7 @@ Options parseOptions(int argc, char** argv)
             's',
             true,
             "Comma-separated workload numbers (ladder steps, then extra "
-            "workloads, then zstd workloads), or \"all\"");
+            "workloads, zstd workloads, and 64-bit workloads), or \"all\"");
     parser.addGlobalFlag("total-mib", 'm', true, "Decoded MiB per row");
     parser.addGlobalFlag(
             "frame-size",
