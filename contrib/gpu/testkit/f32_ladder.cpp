@@ -2,13 +2,11 @@
 
 #include "contrib/gpu/testkit/f32_ladder.h"
 
-#include <algorithm>
 #include <utility>
 #include <vector>
 
 #include "contrib/gpu/testkit/frame_factory.h"
-#include "openzl/codecs/zl_split.h"
-#include "openzl/compress/private_nodes.h"
+#include "contrib/gpu/testkit/graph_builders.h"
 
 namespace openzl::gpu::testkit {
 
@@ -23,239 +21,15 @@ WorkloadSpec f32(WorkloadPattern pattern)
     return { .type = NimbleNumericType::F32, .pattern = std::move(pattern) };
 }
 
-// The helpers below build the subtrees of the .graph texts. Each one names
-// the codec that regenerates the subtree, and its arguments build the
-// codec's inputs in slot order.
-
 using openzl::Compressor;
 using openzl::GraphID;
 
-constexpr size_t kSplitBlockBytes = 32 * kKiB;
-
-GraphID store()
-{
-    return ZL_GRAPH_STORE;
-}
-
-GraphID node(Compressor& c, openzl::NodeID n, std::vector<GraphID> inputs)
-{
-    return c.buildStaticGraph(n, inputs);
-}
-
-// 9:b(next): the frame's f32 values as 4-byte numbers.
-GraphID numeric32(Compressor& c, GraphID next)
-{
-    return node(c, ZL_NODE_CONVERT_SERIAL_TO_NUM_LE32, { next });
-}
-
-// 10:nN(next)
-GraphID numToSerial(Compressor& c, GraphID next)
-{
-    return node(c, ZL_NODE_CONVERT_NUM_TO_SERIAL_LE, { next });
-}
-
-// 10:nN(b)
-GraphID storeNum(Compressor& c)
-{
-    return numToSerial(c, store());
-}
-
-// 6:sN(b)
-GraphID storeStruct(Compressor& c)
-{
-    return node(c, ZL_NODE_CONVERT_STRUCT_TO_SERIAL, { store() });
-}
-
-// 28:nN(b)
-GraphID bitpackInt(Compressor& c)
-{
-    return node(c, ZL_NODE_BITPACK_INT, { store() });
-}
-
-// 27:b(b)
-GraphID bitpackSerial(Compressor& c)
-{
-    return node(c, ZL_NODE_BITPACK_SERIAL, { store() });
-}
-
-// 22:b(b)
-GraphID zstd(Compressor& c)
-{
-    return node(c, ZL_NODE_ZSTD, { store() });
-}
-
-// 44:b(b)
-GraphID constant(Compressor& c)
-{
-    return node(c, ZL_NODE_CONSTANT_SERIAL, { store() });
-}
-
-// 29:b(b,b)
-GraphID flatpack(Compressor& c)
-{
-    return node(c, ZL_NODE_FLATPACK, { store(), store() });
-}
-
-// 50:b(28:n1(b),b). The private entropy nodes build their own histogram and
-// table when no entropy selector passes them one.
-GraphID huffman(Compressor& c)
-{
-    return node(
-            c,
-            openzl::NodeID{ ZL_PrivateStandardNodeID_huffman_v2 },
-            { bitpackInt(c), store() });
-}
-
-// 49:b(52:n2(b),b)
-GraphID fse(Compressor& c)
-{
-    const GraphID ncount =
-            node(c,
-                 openzl::NodeID{ ZL_PrivateStandardNodeID_fse_ncount },
-                 { store() });
-    return node(
-            c,
-            openzl::NodeID{ ZL_PrivateStandardNodeID_fse_v2 },
-            { ncount, store() });
-}
-
-// 51:s2(10:n1(fse),b)
-GraphID huffmanStruct(Compressor& c)
-{
-    return node(
-            c,
-            openzl::NodeID{ ZL_PrivateStandardNodeID_huffman_struct_v2 },
-            { numToSerial(c, fse(c)), store() });
-}
-
-// 1:nN(next)
-GraphID delta(Compressor& c, GraphID next)
-{
-    return node(c, ZL_NODE_DELTA_INT, { next });
-}
-
-// 9:b(1:n1(10:n1(next))): delta on the bytes of a transposed stream.
-GraphID deltaBytes(Compressor& c, GraphID next)
-{
-    return node(
-            c,
-            ZL_NODE_CONVERT_SERIAL_TO_NUM8,
-            { delta(c, numToSerial(c, next)) });
-}
-
-// 37:nN(alphabet,indices). Nimble's numeric graph sorts the alphabet.
-GraphID tokenize(Compressor& c, GraphID alphabet, GraphID indices)
-{
-    openzl::LocalParams params;
-    params.addIntParam(ZL_TOKENIZE_SORT_PID, 1);
-    const openzl::NodeID sorted = c.parameterizeNode(
-            ZL_NODE_TOKENIZE_NUMERIC, { .localParams = std::move(params) });
-    return node(c, sorted, { alphabet, indices });
-}
-
-// 7:s2(28:n2(b)): field_lz tokens, bitpacked.
-GraphID bitpackTokens(Compressor& c)
-{
-    return node(c, ZL_NODE_CONVERT_STRUCT_TO_NUM_LE, { bitpackInt(c) });
-}
-
-// 36:s2(7:s2(28:n2(b)),10:n1(indices))
-GraphID tokenizeTokens(Compressor& c, GraphID indices)
-{
-    return node(
-            c,
-            ZL_NODE_TOKENIZE_STRUCT,
-            { bitpackTokens(c), numToSerial(c, indices) });
-}
-
-// 25:n4(10:n1(codes),b)
-GraphID quantOffsets(Compressor& c, GraphID codes)
-{
-    return node(
-            c, ZL_NODE_QUANTIZE_OFFSETS, { numToSerial(c, codes), store() });
-}
-
-// 26:n4(10:n1(codes),b)
-GraphID quantLengths(Compressor& c, GraphID codes)
-{
-    return node(
-            c, ZL_NODE_QUANTIZE_LENGTHS, { numToSerial(c, codes), store() });
-}
-
-// 4:sN(bytes...). Core's split_struct graph runs its one custom node and
-// sends output i to custom graph i. A static graph cannot do this, because
-// transpose_split has one variable output for all its streams.
-GraphID transposeSplit(Compressor& c, std::vector<GraphID> bytes)
-{
-    return c.parameterizeGraph(
-            ZL_GRAPH_SPLIT_STRUCT,
-            { .customGraphs = std::move(bytes),
-              .customNodes =
-                      std::vector<openzl::NodeID>{ ZL_NODE_TRANSPOSE_SPLIT } });
-}
-
-// Cuts the input into blocks of kSplitBlockBytes. A last size of 0 means the
-// rest of the input.
-ZL_SplitInstructions splitIntoBlocks(ZL_SplitState* state, const ZL_Input* in)
-{
-    const size_t blockElts =
-            std::max<size_t>(1, kSplitBlockBytes / ZL_Input_eltWidth(in));
-    const size_t numBlocks =
-            std::max<size_t>(1, ZL_Input_numElts(in) / blockElts);
-    auto* const sizes = static_cast<size_t*>(
-            ZL_SplitState_malloc(state, numBlocks * sizeof(size_t)));
-    if (sizes == nullptr) {
-        return { nullptr, 0 };
-    }
-    std::fill(sizes, sizes + numBlocks - 1, blockElts);
-    sizes[numBlocks - 1] = 0;
-    return { sizes, numBlocks };
-}
-
-// splitn on a serial stream, or splitn_struct on a struct stream, written
-// "*" in the shape. splitN has one variable output, so a static graph sends
-// every block to `block`.
-GraphID split(Compressor& c, ZL_Type type, GraphID block)
-{
-    return node(
-            c,
-            ZL_Compressor_registerSplitNode_withParser(
-                    c.get(), type, splitIntoBlocks, nullptr),
-            { block });
-}
-
-GraphID splitSerial(Compressor& c, GraphID block)
-{
-    return split(c, ZL_Type_serial, block);
-}
-
-// 8:nN(24:sN(literals,tokens,offsets,extraLiteralLengths,extraMatchLengths))
-GraphID fieldLz(
-        Compressor& c,
-        GraphID literals,
-        GraphID tokens,
-        GraphID offsets,
-        GraphID extraLiteralLengths,
-        GraphID extraMatchLengths)
-{
-    const GraphID lz =
-            node(c,
-                 ZL_NODE_FIELD_LZ,
-                 { literals,
-                   tokens,
-                   offsets,
-                   extraLiteralLengths,
-                   extraMatchLengths });
-    return node(c, ZL_NODE_CONVERT_NUM_TO_STRUCT_LE, { lz });
-}
-
-// The census found these graphs in production frames that Nimble's numeric
-// graph wrote. We tuned the workload parameters so that each codec's share of
-// the input and its ratio come close to the census. The data must still suit
-// each codec. For example, step 4 keeps byte 3 of the field_lz literals
-// constant for constant_serial, and step 12 keeps the range small enough for
-// 1-byte range_pack output. The ladder test checks that the frames keep
-// their graphs.
+// Each step's graph is one that Nimble's numeric graph writes. The workload
+// parameters set each codec's share of the input and its ratio. The data must
+// still suit each codec. For example, step 4 keeps byte 3 of the field_lz
+// literals constant for constant_serial, and step 12 keeps the range small
+// enough for 1-byte range_pack output. The ladder test checks that the frames
+// keep their graphs.
 //
 // .graph is the decodeGraphShape() text of the frames (see frame_verifier.h).
 // Each codec appears as "ID:type(inputs)". ID is the codec ID. type is the
@@ -790,6 +564,138 @@ std::vector<LadderStep> buildExtraWorkloads()
                    "8:n2(24:s2(4:s2(9:b(1:n1(10:n1(50:b(28:n1(b),b)))),"
                    "22:b(b)),36:s2(7:s2(28:n2(b)),10:n1(50:b(28:n1(b),b))),"
                    "25:n4(10:n1(27:b(b)),b),26:n4(10:n1(b),b),10:n4(b)))))" },
+        // A small frame with few matches: the offset and literal length
+        // codes are too few for bitpack or FSE to gain, so field_lz stores
+        // them.
+        { .name = "f32/bitpacktokens-storedcodes",
+          .spec =
+                  f32(PlannedFloats{
+                          .literals        = PositiveFloats{ .tailShare   = 0.1,
+                                                             .tailOctaves = 32 },
+                          .runs            = 10,
+                          .runLength       = 2,
+                          .copies          = 30,
+                          .copyLength      = 2,
+                          .copyOffsetCodes = 6 }),
+          .frameBytes = 2 * kKiB,
+          .buildGraph =
+                  [](Compressor& c) {
+                      return numeric32(
+                              c,
+                              fieldLz(c,
+                                      transposeSplit(
+                                              c,
+                                              { store(),
+                                                store(),
+                                                store(),
+                                                huffman(c) }),
+                                      bitpackTokens(c),
+                                      quantOffsets(c, store()),
+                                      quantLengths(c, store()),
+                                      storeNum(c)));
+                  },
+          // clang-format off
+          // bitpack_int[n1] --#0--> huffman_v2[b] --#3--> transpose_split[s4] --#0--+--> field_lz[s4]
+          //                                                                         |
+          //                                                   bitpack_int[n2] --#1--+
+          //                                                                         |
+          //                                                     quant_off[n4] --#2--+
+          //                                                                         |
+          //                                                     quant_len[n4] --#3--+
+          // clang-format on
+          .graph = "9:b(8:n4(24:s4(4:s4(b,b,b,50:b(28:n1(b),b)),"
+                   "7:s2(28:n2(b)),25:n4(10:n1(b),b),26:n4(10:n1(b),b),"
+                   "10:n4(b))))" },
+        // A large frame that is mostly literals: the exponent byte passes
+        // the 100000 bytes at which the entropy graph cuts 32 KiB blocks,
+        // while the tokens stay few enough to bitpack. The literals span 30
+        // octaves, so that few of them repeat by chance and add matches.
+        { .name = "f32/splithuffman-fsecodes",
+          .spec =
+                  f32(PlannedFloats{
+                          .literals   = SignedOctaveFloats{ .octaves = 30 },
+                          .runs       = 4,
+                          .runLength  = 24,
+                          .copies     = 80,
+                          .copyLength = 2,
+                          .minCopyDistance = 256 }),
+          .frameBytes = 512 * kKiB,
+          .buildGraph =
+                  [](Compressor& c) {
+                      return numeric32(
+                              c,
+                              fieldLz(c,
+                                      transposeSplit(
+                                              c,
+                                              { store(),
+                                                store(),
+                                                store(),
+                                                splitSerial(c, huffman(c)) }),
+                                      bitpackTokens(c),
+                                      quantOffsets(c, fse(c)),
+                                      quantLengths(c, fse(c)),
+                                      quantLengths(c, store())));
+                  },
+          // clang-format off
+          // bitpack_int[n1] --#0--> huffman_v2[b] --#0--> splitn[b]* --#3--> transpose_split[s4] --#0--+--> field_lz[s4]
+          //                                                                                            |
+          //                                                                      bitpack_int[n2] --#1--+
+          //                                                                                            |
+          //                               fse_ncount[n2] --#0--> fse_v2[b] --#0--> quant_off[n4] --#2--+
+          //                                                                                            |
+          //                               fse_ncount[n2] --#0--> fse_v2[b] --#0--> quant_len[n4] --#3--+
+          //                                                                                            |
+          //                                                                        quant_len[n4] --#4--+
+          // clang-format on
+          .graph = "9:b(8:n4(24:s4(4:s4(b,b,b,40:b(50:b(28:n1(b),b))*),"
+                   "7:s2(28:n2(b)),25:n4(10:n1(49:b(52:n2(b),b)),b),"
+                   "26:n4(10:n1(49:b(52:n2(b),b)),b),26:n4(10:n1(b),b))))" },
+        // A large frame with more copies than f32/splithuffman-fsecodes: more
+        // than 128 tokens make Nimble tokenize them, and fewer than 256
+        // distinct tokens keep tokenize_fixed.
+        { .name = "f32/splithuffman-tokenizetokens",
+          .spec =
+                  f32(PlannedFloats{
+                          .literals   = SignedOctaveFloats{ .octaves = 30 },
+                          .runs       = 4,
+                          .runLength  = 24,
+                          .copies     = 800,
+                          .copyLength = 2,
+                          .minCopyDistance = 256 }),
+          .frameBytes = 512 * kKiB,
+          .buildGraph =
+                  [](Compressor& c) {
+                      return numeric32(
+                              c,
+                              fieldLz(c,
+                                      transposeSplit(
+                                              c,
+                                              { store(),
+                                                store(),
+                                                store(),
+                                                splitSerial(c, huffman(c)) }),
+                                      tokenizeTokens(c, huffman(c)),
+                                      quantOffsets(c, fse(c)),
+                                      quantLengths(c, fse(c)),
+                                      quantLengths(c, store())));
+                  },
+          // clang-format off
+          // bitpack_int[n1] --#0--> huffman_v2[b] --#0--> splitn[b]* --#3--> transpose_split[s4] --#0--+--> field_lz[s4]
+          //                                                                                            |
+          //                                        bitpack_int[n2] --#0--+--> tokenize_fixed[s2] --#1--+
+          //                                                              |                             |
+          //                  bitpack_int[n1] --#0--> huffman_v2[b] --#1--+                             |
+          //                                                                                            |
+          //                               fse_ncount[n2] --#0--> fse_v2[b] --#0--> quant_off[n4] --#2--+
+          //                                                                                            |
+          //                               fse_ncount[n2] --#0--> fse_v2[b] --#0--> quant_len[n4] --#3--+
+          //                                                                                            |
+          //                                                                        quant_len[n4] --#4--+
+          // clang-format on
+          .graph = "9:b(8:n4(24:s4(4:s4(b,b,b,40:b(50:b(28:n1(b),b))*),"
+                   "36:s2(7:s2(28:n2(b)),10:n1(50:b(28:n1(b),b))),"
+                   "25:n4(10:n1(49:b(52:n2(b),b)),b),"
+                   "26:n4(10:n1(49:b(52:n2(b),b)),b),26:n4(10:n1(b),b))))" },
     };
 }
 
