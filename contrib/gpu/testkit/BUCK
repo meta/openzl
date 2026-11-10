@@ -23,6 +23,7 @@ cpp_library(
         "multichunk_frame.cpp",
         "nimble_graph.cpp",
         "nimble_workloads.cpp",
+        "parse_plan.cpp",
         "zstd_workloads.cpp",
     ],
     headers = relative_headers([
@@ -35,6 +36,7 @@ cpp_library(
         "multichunk_frame.h",
         "nimble_graph.h",
         "nimble_workloads.h",
+        "parse_plan.h",
         "zstd_workloads.h",
     ])
     | {
@@ -49,6 +51,7 @@ cpp_library(
             "multichunk_frame.h",
             "nimble_graph.h",
             "nimble_workloads.h",
+            "parse_plan.h",
             "zstd_workloads.h",
         ]
     },
@@ -72,6 +75,7 @@ cpp_library(
         "multichunk_frame.h",
         "nimble_graph.h",
         "nimble_workloads.h",
+        "parse_plan.h",
         "zstd_workloads.h",
     ]),
     header_namespace = "",
