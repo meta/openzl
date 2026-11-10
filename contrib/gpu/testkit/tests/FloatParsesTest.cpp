@@ -4,10 +4,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <random>
 #include <stdexcept>
 
 #include "contrib/gpu/testkit/float_parses.h"
 #include "contrib/gpu/testkit/nimble_workloads.h"
+#include "contrib/gpu/testkit/parse_plan.h"
 
 // F32LadderTest runs every pattern through compressStep(). These tests cover
 // the parameter checks, which the ladder specs never reach.
@@ -85,6 +87,25 @@ TEST(FloatParsesTest, rejectParametersThatDoNotFit)
                                 .minCopyDistance = 16 },
                  1024),
             std::invalid_argument);
+    // Copy distances of 2^64 or more, and runs longer than any frame.
+    EXPECT_THROW(
+            make(PlannedFloats{ .literals        = RandomFloatBits{},
+                                .copies          = 1,
+                                .copyOffsetCodes = 64 },
+                 1024),
+            std::invalid_argument);
+    EXPECT_THROW(
+            make(PlannedFloats{ .literals  = RandomFloatBits{},
+                                .runs      = 1,
+                                .runLength = 0xFFFFFFFE },
+                 1024),
+            std::invalid_argument);
+}
+
+TEST(FloatParsesTest, uniformBelowRejectsAnEmptyRange)
+{
+    std::mt19937_64 rng;
+    EXPECT_THROW(uniformBelow(rng, 0), std::invalid_argument);
 }
 
 TEST(FloatParsesTest, rejectSpecsThatWouldOverrunTheirBuffers)

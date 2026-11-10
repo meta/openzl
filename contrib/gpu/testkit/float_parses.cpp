@@ -13,6 +13,7 @@
 
 #include "contrib/gpu/testkit/bytes.h"
 #include "contrib/gpu/testkit/nimble_workloads.h"
+#include "contrib/gpu/testkit/parse_plan.h"
 #include "openzl/shared/bits.h"
 
 namespace openzl::gpu::testkit {
@@ -20,8 +21,6 @@ namespace openzl::gpu::testkit {
 namespace {
 
 constexpr uint32_t kOneBits = 0x3F800000;
-// A placement gives up after this many collisions in a row.
-constexpr int kMaxTries = 100;
 
 uint32_t floatBits(double value)
 {
@@ -29,43 +28,6 @@ uint32_t floatBits(double value)
     uint32_t bits;
     std::memcpy(&bits, &narrowed, sizeof(bits));
     return bits;
-}
-
-size_t uniformBelow(std::mt19937_64& rng, size_t bound)
-{
-    return std::uniform_int_distribution<size_t>(0, bound - 1)(rng);
-}
-
-// Returns true with probability `p`. Throws std::invalid_argument unless `p`
-// is in [0, 1].
-bool chance(std::mt19937_64& rng, double p)
-{
-    if (!(p >= 0 && p <= 1)) {
-        throw std::invalid_argument("a probability must be in [0, 1]");
-    }
-    return std::bernoulli_distribution(p)(rng);
-}
-
-// Returns how many draws in a row continue with probability `q`, up to `cap`.
-// Throws std::invalid_argument unless `q` is below 1.
-size_t geometric(std::mt19937_64& rng, double q, size_t cap)
-{
-    // std::geometric_distribution needs a success probability in (0, 1).
-    if (!(q < 1)) {
-        throw std::invalid_argument("a continue probability must be below 1");
-    }
-    if (q <= 0) {
-        return 0;
-    }
-    return std::min<size_t>(
-            cap, std::geometric_distribution<size_t>(1.0 - q)(rng));
-}
-
-// Returns a value in [2^log2, 2^(log2 + 1)).
-size_t inOctave(std::mt19937_64& rng, size_t log2)
-{
-    const size_t low = size_t{ 1 } << log2;
-    return low + uniformBelow(rng, low);
 }
 
 // Returns the sorted alphabet that starts at 1.0f and steps by `gaps[i]`.
@@ -84,55 +46,6 @@ std::vector<uint32_t> alphabetFromGaps(const std::vector<uint32_t>& gaps)
     }
     return alphabet;
 }
-
-// One byte stream drawn in 8-byte windows. A window is a pattern from a
-// dictionary of 64 patterns, or skewed bytes: one of 16 common values with
-// some probability, and uniform if not. drawCommon() and drawPatterns() are
-// separate so that a caller with several streams can keep its draw order.
-class WindowBytes {
-   public:
-    void drawCommon(std::mt19937_64& rng)
-    {
-        for (uint8_t& value : common_) {
-            value = static_cast<uint8_t>(rng());
-        }
-    }
-
-    void drawPatterns(std::mt19937_64& rng, double commonShare)
-    {
-        for (auto& pattern : patterns_) {
-            for (uint8_t& value : pattern) {
-                value = skewed(rng, commonShare);
-            }
-        }
-    }
-
-    uint8_t next(std::mt19937_64& rng, double patternShare, double commonShare)
-    {
-        if (offset_ == 0) {
-            pattern_    = uniformBelow(rng, patterns_.size());
-            usePattern_ = chance(rng, patternShare);
-        }
-        const uint8_t value = usePattern_ ? patterns_[pattern_][offset_]
-                                          : skewed(rng, commonShare);
-        offset_             = (offset_ + 1) % patterns_[0].size();
-        return value;
-    }
-
-   private:
-    uint8_t skewed(std::mt19937_64& rng, double commonShare)
-    {
-        return chance(rng, commonShare)
-                ? common_[uniformBelow(rng, common_.size())]
-                : static_cast<uint8_t>(rng());
-    }
-
-    std::array<uint8_t, 16> common_{};
-    std::array<std::array<uint8_t, 8>, 64> patterns_{};
-    size_t pattern_  = 0;
-    size_t offset_   = 0;
-    bool usePattern_ = false;
-};
 
 // Literal values for PlannedFloats and CopyStreamFloats.
 class LiteralSource {
@@ -264,7 +177,7 @@ class LiteralSource {
     void walkByte3(double move, double grow)
     {
         constexpr int kLowest = 0x08, kHighest = 0x77;
-        int next3 = byte3_ + step(move, grow);
+        int next3 = byte3_ + signedStep(rng_, move, grow);
         while (next3 < kLowest || next3 > kHighest) {
             next3 = next3 < kLowest ? 2 * kLowest - next3
                                     : 2 * kHighest - next3;
@@ -274,16 +187,7 @@ class LiteralSource {
 
     void walkByte2(double move, double grow)
     {
-        byte2_ = (byte2_ + step(move, grow)) & 0xFF;
-    }
-
-    int step(double move, double grow)
-    {
-        if (!chance(rng_, move)) {
-            return 0;
-        }
-        const int size = 1 + static_cast<int>(geometric(rng_, grow, 64));
-        return (rng_() & 1) ? size : -size;
+        byte2_ = (byte2_ + signedStep(rng_, move, grow)) & 0xFF;
     }
 
     const FloatLiterals& literals_;
@@ -335,115 +239,22 @@ class PairedLengths {
     bool paired_  = false;
 };
 
-enum Slot : uint8_t { kLiteral, kRepeat, kCopyStart, kCopyRest };
-
-bool allLiteral(const std::vector<Slot>& slots, size_t first, size_t last)
-{
-    for (size_t i = first; i <= last && i < slots.size(); ++i) {
-        if (slots[i] != kLiteral) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Places `count` spans of `length` slots at positions from `minAt`, each with
-// a literal slot on both sides. A span starts with `first`, and its other
-// slots get `rest`. A span that collides kMaxTries times in a row is dropped.
-// Throws std::invalid_argument if a span cannot fit at all.
-void placeSpans(
-        std::vector<Slot>& slots,
-        uint32_t count,
-        size_t length,
-        size_t minAt,
-        Slot first,
-        Slot rest,
-        std::mt19937_64& rng)
-{
-    if (count > 0 && (length == 0 || slots.size() < minAt + length + 1)) {
-        throw std::invalid_argument("the spans do not fit the frame");
-    }
-    for (uint32_t s = 0; s < count; ++s) {
-        for (int tries = 0; tries < kMaxTries; ++tries) {
-            const size_t at =
-                    minAt + uniformBelow(rng, slots.size() - minAt - length);
-            if (allLiteral(slots, at - 1, at + length)) {
-                slots[at] = first;
-                std::fill_n(slots.begin() + at + 1, length - 1, rest);
-                break;
-            }
-        }
-    }
-}
-
-// Returns the source position of the copy at position `at`.
-size_t copySource(
-        const PlannedFloats& p,
-        const std::vector<Slot>& slots,
-        size_t at,
-        std::mt19937_64& rng)
-{
-    size_t from = 0;
-    for (int tries = 0; tries < kMaxTries; ++tries) {
-        from = p.copyOffsetCodes > 0
-                ? at - inOctave(rng, uniformBelow(rng, p.copyOffsetCodes))
-                : uniformBelow(rng, at - p.minCopyDistance);
-        if (slots[from] == kLiteral) {
-            break;
-        }
-    }
-    return from;
-}
-
 } // namespace
 
 std::string
 writeFloats(const PlannedFloats& p, size_t numElts, std::mt19937_64& rng)
 {
-    const size_t minCopyAt = p.copyOffsetCodes > 0
-            ? (size_t{ 2 } << p.copyOffsetCodes) + 4
-            : 2 * size_t{ p.minCopyDistance };
-    if ((p.runs > 0 && (p.runLength == 0 || numElts < p.runLength + 4))
-        || (p.copies > 0
-            && (p.copyLength == 0 || p.copyOffsetCodes > 30
-                || (p.copyOffsetCodes > 0) == (p.minCopyDistance > 0)
-                || numElts < minCopyAt + p.copyLength + 2))) {
-        throw std::invalid_argument("PlannedFloats do not fit the frame");
-    }
-    std::vector<Slot> slots(numElts, kLiteral);
-    placeSpans(slots, p.runs, p.runLength, 2, kRepeat, kRepeat, rng);
-    placeSpans(
-            slots,
-            p.copies,
-            p.copyLength,
-            minCopyAt,
-            kCopyStart,
-            kCopyRest,
-            rng);
+    const ParsePlan plan{ .runs            = p.runs,
+                          .runLength       = p.runLength,
+                          .copies          = p.copies,
+                          .copyLength      = p.copyLength,
+                          .copyOffsetCodes = p.copyOffsetCodes,
+                          .minCopyDistance = p.minCopyDistance };
+    const std::vector<ParseSlot> slots = planParse(plan, numElts, rng);
     LiteralSource literals{ p.literals, rng };
-    std::vector<uint32_t> values;
-    values.reserve(numElts);
-    size_t copyFrom = 0;
-    for (size_t i = 0; i < numElts; ++i) {
-        switch (slots[i]) {
-            case kLiteral:
-                values.push_back(literals.next());
-                break;
-            case kRepeat:
-                values.push_back(values.back());
-                break;
-            case kCopyStart: {
-                const size_t from = copySource(p, slots, i, rng);
-                copyFrom          = from + 1;
-                values.push_back(values[from]);
-                break;
-            }
-            case kCopyRest:
-                values.push_back(values[copyFrom++]);
-                break;
-        }
-    }
-    return toLittleEndianBytes(values);
+    return toLittleEndianBytes(fillParse<uint32_t>(plan, slots, rng, [&] {
+        return literals.next();
+    }));
 }
 
 std::string
