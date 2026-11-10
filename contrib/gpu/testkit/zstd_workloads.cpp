@@ -5,19 +5,13 @@
 #include <string>
 #include <utility>
 
-#include "openzl/compress/private_nodes.h"
+#include "contrib/gpu/testkit/graph_builders.h"
 
 namespace openzl::gpu::testkit {
 
 namespace {
 
 constexpr size_t kKiB = 1024;
-
-// 22:b(b)
-openzl::GraphID zstd(openzl::Compressor& c)
-{
-    return c.buildStaticGraph(ZL_NODE_ZSTD, { ZL_GRAPH_STORE });
-}
 
 // Frames of `frameBytes` that hold a PinnedValues column of `type` with
 // `cardinality` distinct values from 0 through `range`.
