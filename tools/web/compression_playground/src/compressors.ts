@@ -20,6 +20,15 @@ export const GZIP_LEVELS = range(1, 9);
  * throws above `MAX_TRAIN_CANDIDATES` (25, which bounds its allocations).
  */
 export const TRAINED_CANDIDATE_COUNTS = range(6, 25);
+/**
+ * Training's wall-clock budgets. A fixed few rather than free entry: the
+ * trainers spend whatever they are given, so each choice is how long the run
+ * takes.
+ */
+export const TRAIN_TIME_SECS = [30, 120, 300] as const;
+export type TrainTimeSecs = (typeof TRAIN_TIME_SECS)[number];
+/** Keep in sync with `OPENZL_WASM_TRAIN_DEFAULT_MAX_TIME_SECS` in openzl_wasm.h. */
+export const DEFAULT_TRAIN_TIME_SECS: TrainTimeSecs = 30;
 
 export const OPENZL_DEFAULT_LEVEL = 6;
 
@@ -106,6 +115,7 @@ export interface OpenZlRow extends CompressorRowBase {
   /** What the user asked for, not what will happen: see `isTrainableProfile`. */
   trainRequested: boolean;
   candidates: number;
+  maxTrainTimeSecs: TrainTimeSecs;
   optionsOpen: boolean;
 }
 
@@ -131,6 +141,7 @@ export function createCompressorRow(id: number, compressor: CompressorName): Com
       profile: DEFAULT_OPENZL_PROFILE,
       trainRequested: true,
       candidates: DEFAULT_TRAINED_CANDIDATES,
+      maxTrainTimeSecs: DEFAULT_TRAIN_TIME_SECS,
       optionsOpen: true,
     };
   }
