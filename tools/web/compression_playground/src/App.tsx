@@ -1,6 +1,6 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-import {useCallback, useEffect, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import {Box, Flex} from '@chakra-ui/react';
 import {ToolHeader} from '@openzl/web-common';
 import ResultsPanel from './components/ResultsPanel.tsx';
@@ -9,6 +9,7 @@ import UnsupportedBrowser from './components/UnsupportedBrowser.tsx';
 import {toCompressorConfig, type CompressorConfig, type RunConfig, type RunState} from './benchmarkTypes.ts';
 import {ITERATIONS_DEFAULT} from './compressors.ts';
 import {detectEngineSupport, engineBlocker, isolationSettled} from './engineSupport.ts';
+import {fetchSample} from './fetchSample.ts';
 import {runBenchmark} from './runBenchmark.ts';
 import {useCompressorRows} from './useCompressorRows.ts';
 import logoUrl from '/OpenZL_logo.png?url';
@@ -65,20 +66,19 @@ function describeRows(positions: readonly number[]): string {
 }
 
 /**
- * Why Run is unavailable, if it is. A zstd or gzip row with no levels would
- * drop out of the run with nothing on the page to say so, so Run waits until
- * it has one.
+ * What in the compressor rows keeps a run from starting. A zstd or gzip row
+ * with no levels would drop out of the run with nothing on the page to say so,
+ * so a run waits until it has one.
  */
-function runBlockersFor(file: File | null, compressors: readonly CompressorConfig[]): string[] {
-  const blockers: string[] = [];
-  if (file === null) {
-    blockers.push('Choose a file in step 1 to run the benchmark.');
-  }
+function configBlockersFor(compressors: readonly CompressorConfig[]): string[] {
   const emptyRows = compressors.flatMap((config, index) => (config.levels.length === 0 ? [index + 1] : []));
-  if (emptyRows.length > 0) {
-    blockers.push(`Pick at least one level for ${describeRows(emptyRows)}.`);
-  }
-  return blockers;
+  return emptyRows.length > 0 ? [`Pick at least one level for ${describeRows(emptyRows)}.`] : [];
+}
+
+/** Why Run is unavailable, if it is. */
+function runBlockersFor(file: File | null, compressors: readonly CompressorConfig[]): string[] {
+  const fileBlockers = file === null ? ['Choose a file in step 1 to run the benchmark.'] : [];
+  return [...fileBlockers, ...configBlockersFor(compressors)];
 }
 
 export default function App() {
@@ -127,6 +127,7 @@ function Playground() {
     runBenchmark(config, setRunState);
   }, []);
   const compressorConfigs = compressors.rows.map(toCompressorConfig);
+  const configBlockers = configBlockersFor(compressorConfigs);
   const runBlockers = runBlockersFor(file, compressorConfigs);
   const runConfig: RunConfig | null =
     file === null || runBlockers.length > 0
@@ -135,6 +136,39 @@ function Playground() {
           input: file,
           compressors: compressorConfigs,
           iterations,
+        };
+  // The rows and iterations as last rendered. They stay editable while the
+  // sample downloads, so the run reads them when it starts, not at the press.
+  const liveSetup = useRef({compressors: compressorConfigs, iterations});
+  useEffect(() => {
+    liveSetup.current = {compressors: compressorConfigs, iterations};
+  });
+  // The sample leaves the chosen file alone, so it runs even with none chosen --
+  // but not with a row Run would refuse.
+  const onTrySample =
+    configBlockers.length > 0
+      ? null
+      : () => {
+          // `loading` from the press rather than from when the run starts, so
+          // both buttons and the file picker stay disabled while the sample
+          // downloads.
+          setRunState({status: 'loading'});
+          fetchSample().then(
+            (sample) => {
+              // A row emptied during the download holds the run back, as it
+              // would Run, which then says why.
+              const setup = liveSetup.current;
+              if (configBlockersFor(setup.compressors).length > 0) {
+                setRunState({status: 'idle'});
+                return;
+              }
+              onRun({input: sample, ...setup});
+            },
+            (error: unknown) => {
+              const message = error instanceof Error ? error.message : String(error);
+              setRunState({status: 'error', message, results: [], failures: []});
+            },
+          );
         };
   useBlockStrayFileDrops();
 
@@ -157,7 +191,7 @@ function Playground() {
         runConfig={runConfig}
         runState={runState}
         onRun={onRun}
-        onTrySample={null}
+        onTrySample={onTrySample}
         runBlockers={runBlockers}
       />
       <ResultsPanel runState={runState} />
