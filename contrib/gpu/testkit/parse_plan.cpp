@@ -22,23 +22,29 @@ bool allLiteral(const std::vector<ParseSlot>& slots, size_t first, size_t last)
     return true;
 }
 
-// Places `count` spans of `length` slots at positions from `minAt`, each with
-// a literal slot on both sides. A span starts with `first`, and its other
-// slots get `rest`. A span that collides kMaxTries times in a row is dropped.
-// Throws std::invalid_argument if a span cannot fit at all.
+// Places `count` spans at positions from `minAt`, each with a literal slot on
+// both sides. A span is `minLength` slots long, or draws its length from
+// [minLength, maxLength] if maxLength is larger. It starts with `first`, and
+// its other slots get `rest`. A span that collides kMaxTries times in a row is
+// dropped. Throws std::invalid_argument if a span cannot fit at all.
 void placeSpans(
         std::vector<ParseSlot>& slots,
         uint32_t count,
-        size_t length,
+        size_t minLength,
+        size_t maxLength,
         size_t minAt,
         ParseSlot first,
         ParseSlot rest,
         std::mt19937_64& rng)
 {
-    if (count > 0 && (length == 0 || slots.size() < minAt + length + 1)) {
+    maxLength = std::max(minLength, maxLength);
+    if (count > 0 && (minLength == 0 || slots.size() < minAt + maxLength + 1)) {
         throw std::invalid_argument("the spans do not fit the frame");
     }
     for (uint32_t s = 0; s < count; ++s) {
+        const size_t length = maxLength > minLength
+                ? minLength + uniformBelow(rng, maxLength - minLength + 1)
+                : minLength;
         for (int tries = 0; tries < kMaxTries; ++tries) {
             const size_t at =
                     minAt + uniformBelow(rng, slots.size() - minAt - length);
@@ -149,13 +155,16 @@ planParse(const ParsePlan& plan, size_t numElts, std::mt19937_64& rng)
     if ((plan.runs > 0
          && (plan.runLength == 0 || numElts < size_t{ plan.runLength } + 4))
         || (plan.copies > 0
-            && numElts < minCopyAt + size_t{ plan.copyLength } + 2)) {
+            && numElts < minCopyAt
+                            + std::max(plan.copyLength, plan.maxCopyLength)
+                            + 2)) {
         throw std::invalid_argument("the parse plan does not fit the frame");
     }
     std::vector<ParseSlot> slots(numElts, ParseSlot::literal);
     placeSpans(
             slots,
             plan.runs,
+            plan.runLength,
             plan.runLength,
             2,
             ParseSlot::repeat,
@@ -165,6 +174,7 @@ planParse(const ParsePlan& plan, size_t numElts, std::mt19937_64& rng)
             slots,
             plan.copies,
             plan.copyLength,
+            plan.maxCopyLength,
             minCopyAt,
             ParseSlot::copyStart,
             ParseSlot::copyRest,
