@@ -12,7 +12,10 @@
 // A row builds a few distinct frames of one workload with compressStep(), so
 // no selector chooses the graph, and copies them until the row holds
 // --total-mib of decoded data. Each frame holds the workload's own frame size,
-// or --frame-size if it is set. Thread t always runs on the same CPU and writes
+// or --frame-size if it is set. With --mixed, a row instead decodes
+// --mixed-copies copies of a mixed workload from testkit, whose frames mix
+// workloads and sizes. Each thread decodes a run of frames that holds about the
+// same number of decoded bytes. Thread t always runs on the same CPU and writes
 // its own buffers before the timed runs, so on a host with several sockets
 // their pages sit in that CPU's local memory, as a reader's buffers would.
 // Every timed run checks its output against the input.
@@ -44,9 +47,8 @@
 #include <vector>
 
 #include "contrib/gpu/testkit/f32_ladder.h"
+#include "contrib/gpu/testkit/mixed_workload.h"
 #include "contrib/gpu/testkit/nimble_workloads.h"
-#include "contrib/gpu/testkit/u64_workloads.h"
-#include "contrib/gpu/testkit/zstd_workloads.h"
 #include "openzl/openzl.hpp"
 #include "tools/arg/arg_parser.h"
 
@@ -62,7 +64,7 @@ constexpr size_t kDistinctFrames = 16;
 enum class DCtxLifetime { frame, thread, pool };
 
 struct Options {
-    // Workload numbers in workloads(), starting at 1.
+    // Workload numbers in testkit::allWorkloads(), starting at 1.
     std::vector<size_t> steps;
     // Decoded MiB per row.
     size_t totalMiB = 256;
@@ -74,23 +76,11 @@ struct Options {
     std::vector<DCtxLifetime> dctx = { DCtxLifetime::frame,
                                        DCtxLifetime::thread };
     std::vector<size_t> poolSlots  = { 1, 4, 16, 64 };
+    // With a mixed workload, the rows decode it instead of single workloads.
+    const testkit::MixedWorkload* mixed = nullptr;
+    // Copies of the mixed workload per row.
+    size_t mixedCopies = 1;
 };
-
-// The ladder steps, then the extra workloads, the zstd workloads, and the
-// 64-bit workloads.
-const std::vector<testkit::LadderStep>& workloads()
-{
-    static const std::vector<testkit::LadderStep> all = [] {
-        std::vector<testkit::LadderStep> list = testkit::f32Ladder();
-        for (const auto* more : { &testkit::f32ExtraWorkloads(),
-                                  &testkit::zstdWorkloads(),
-                                  &testkit::u64Workloads() }) {
-            list.insert(list.end(), more->begin(), more->end());
-        }
-        return list;
-    }();
-    return all;
-}
 
 // Parses a positive decimal integer. std::stoull would accept "4x" and "-1".
 size_t parseSize(const std::string& text)
@@ -197,6 +187,18 @@ Options parseOptions(int argc, char** argv)
             'p',
             true,
             "Comma-separated slot counts for --dctx pool");
+    parser.addGlobalFlag(
+            "mixed",
+            'x',
+            true,
+            "Decode this mixed workload instead of single workloads: "
+            "f32-u64-zstd. It does not use --steps, --total-mib, or "
+            "--frame-size, but they must still be valid");
+    parser.addGlobalFlag(
+            "mixed-copies",
+            'n',
+            true,
+            "Copies of the mixed workload that each row decodes");
     const arg::ParsedArgs args = parser.parse(argc, argv);
 
     Options options;
@@ -204,7 +206,7 @@ Options parseOptions(int argc, char** argv)
     if (steps && *steps != "all") {
         options.steps = parseSizes(*steps);
     } else {
-        for (size_t step = 1; step <= workloads().size(); ++step) {
+        for (size_t step = 1; step <= testkit::allWorkloads().size(); ++step) {
             options.steps.push_back(step);
         }
     }
@@ -226,11 +228,22 @@ Options parseOptions(int argc, char** argv)
     if (const auto value = args.globalFlag("pool-slots")) {
         options.poolSlots = parseSizes(*value);
     }
+    if (const auto value = args.globalFlag("mixed")) {
+        if (*value != "f32-u64-zstd") {
+            throw std::invalid_argument(
+                    "unknown mixed workload: \"" + *value + "\"");
+        }
+        options.mixed = &testkit::f32U64ZstdMixedWorkload();
+    }
+    if (const auto value = args.globalFlag("mixed-copies")) {
+        options.mixedCopies = parseSize(*value);
+    }
     const size_t last =
             *std::max_element(options.steps.begin(), options.steps.end());
-    if (last > workloads().size()) {
+    if (last > testkit::allWorkloads().size()) {
         throw std::invalid_argument(
-                "steps must be 1 to " + std::to_string(workloads().size()));
+                "steps must be 1 to "
+                + std::to_string(testkit::allWorkloads().size()));
     }
     return options;
 }
@@ -319,11 +332,28 @@ double runPerThread(size_t threads, const Work& work)
 }
 
 // The distinct frames of one row. Frame i of the row is distinct frame
-// i % raw.size(). Every raw frame holds the step's frameBytes.
+// i % raw.size(). A workload's frames all hold its frame size, and a mixed
+// workload's frames hold the sizes of their parts.
 struct FrameSet {
     std::vector<std::string> raw;
     std::vector<std::string> compressed;
     size_t count = 0;
+
+    size_t rawBytes(size_t i) const
+    {
+        return raw[i % raw.size()].size();
+    }
+
+    size_t decodedBytes() const
+    {
+        size_t distinctBytes = 0;
+        size_t headBytes     = 0;
+        for (size_t i = 0; i < raw.size(); ++i) {
+            distinctBytes += raw[i].size();
+            headBytes += i < count % raw.size() ? raw[i].size() : 0;
+        }
+        return count / raw.size() * distinctBytes + headBytes;
+    }
 };
 
 FrameSet makeFrameSet(
@@ -348,12 +378,13 @@ FrameSet makeFrameSet(
 
 // The frames that one thread decodes: frames first to first + frames - 1 of
 // the row. Frame k starts at compressedOffsets[k] in `compressed` and at
-// k * frameBytes in `outputs`.
+// outputOffsets[k] in `outputs`.
 struct ThreadFrames {
     size_t first = 0;
     std::vector<char> compressed;
     std::vector<size_t> compressedOffsets;
     std::vector<char> outputs;
+    std::vector<size_t> outputOffsets;
     // Used by DCtxLifetime::thread.
     std::optional<openzl::DCtx> dctx;
 
@@ -368,27 +399,46 @@ struct ThreadFrames {
                  compressedOffsets[k + 1] - compressedOffsets[k] };
     }
 
-    poly::span<char> output(size_t k, size_t frameBytes)
+    poly::span<char> output(size_t k)
     {
-        return { outputs.data() + k * frameBytes, frameBytes };
+        return { outputs.data() + outputOffsets[k],
+                 outputOffsets[k + 1] - outputOffsets[k] };
     }
 };
 
-// Splits the row's frames over `threads` threads. Each thread allocates and
-// writes its own buffers, so it touches their pages first.
-std::vector<ThreadFrames>
-placeFrames(const FrameSet& set, size_t frameBytes, size_t threads)
+// Splits the row's frames over `threads` threads, in order, so that each
+// thread decodes about the same number of bytes. A thread gets no frames when
+// a frame is larger than a thread's share of the bytes. Each thread allocates
+// and writes its own buffers, so it touches their pages first.
+std::vector<ThreadFrames> placeFrames(const FrameSet& set, size_t threads)
 {
+    std::vector<size_t> decodedBefore(set.count + 1, 0);
+    for (size_t i = 0; i < set.count; ++i) {
+        decodedBefore[i + 1] = decodedBefore[i] + set.rawBytes(i);
+    }
+    // The first frame of thread t: the first frame that starts at or after t
+    // threads' share of the bytes.
+    const auto firstFrameOf = [&](size_t t) {
+        const size_t bytes = static_cast<size_t>(
+                static_cast<double>(decodedBefore.back()) * t / threads);
+        return static_cast<size_t>(
+                std::lower_bound(
+                        decodedBefore.begin(), decodedBefore.end() - 1, bytes)
+                - decodedBefore.begin());
+    };
     std::vector<ThreadFrames> placed(threads);
     runPerThread(threads, [&](size_t t) {
         ThreadFrames& mine = placed[t];
-        mine.first         = t * set.count / threads;
-        const size_t end   = (t + 1) * set.count / threads;
+        mine.first         = firstFrameOf(t);
+        const size_t end   = t + 1 == threads ? set.count : firstFrameOf(t + 1);
         mine.compressedOffsets.push_back(0);
+        mine.outputOffsets.push_back(0);
         for (size_t i = mine.first; i < end; ++i) {
             mine.compressedOffsets.push_back(
                     mine.compressedOffsets.back()
                     + set.compressed[i % set.compressed.size()].size());
+            mine.outputOffsets.push_back(
+                    mine.outputOffsets.back() + set.rawBytes(i));
         }
         mine.compressed.reserve(mine.compressedOffsets.back());
         for (size_t i = mine.first; i < end; ++i) {
@@ -397,7 +447,7 @@ placeFrames(const FrameSet& set, size_t frameBytes, size_t threads)
             mine.compressed.insert(
                     mine.compressed.end(), frame.begin(), frame.end());
         }
-        mine.outputs.assign(mine.frames() * frameBytes, '\0');
+        mine.outputs.assign(mine.outputOffsets.back(), '\0');
         mine.dctx.emplace();
     });
     return placed;
@@ -520,28 +570,23 @@ class DCtxPool {
     std::vector<std::unique_ptr<openzl::DCtx>> stack_;
 };
 
-void decodeFrames(ThreadFrames& mine, size_t frameBytes, DCtxLifetime lifetime)
+void decodeFrames(ThreadFrames& mine, DCtxLifetime lifetime)
 {
     for (size_t k = 0; k < mine.frames(); ++k) {
         if (lifetime == DCtxLifetime::frame) {
             openzl::DCtx dctx;
-            dctx.decompressSerial(mine.output(k, frameBytes), mine.frame(k));
+            dctx.decompressSerial(mine.output(k), mine.frame(k));
         } else {
-            mine.dctx->decompressSerial(
-                    mine.output(k, frameBytes), mine.frame(k));
+            mine.dctx->decompressSerial(mine.output(k), mine.frame(k));
         }
     }
 }
 
-void decodeFramesWithPool(
-        ThreadFrames& mine,
-        size_t frameBytes,
-        DCtxPool& pool,
-        size_t slot)
+void decodeFramesWithPool(ThreadFrames& mine, DCtxPool& pool, size_t slot)
 {
     for (size_t k = 0; k < mine.frames(); ++k) {
         std::unique_ptr<openzl::DCtx> dctx = pool.take(slot);
-        dctx->decompressSerial(mine.output(k, frameBytes), mine.frame(k));
+        dctx->decompressSerial(mine.output(k), mine.frame(k));
         pool.give(slot, std::move(dctx));
     }
 }
@@ -549,7 +594,7 @@ void decodeFramesWithPool(
 // Throws unless every output holds its raw frame, then zeroes the outputs so
 // that the next run cannot pass on this run's bytes.
 void checkAndClearOutputs(
-        const testkit::LadderStep& step,
+        const std::string& name,
         const FrameSet& set,
         std::vector<ThreadFrames>& placed)
 {
@@ -559,10 +604,10 @@ void checkAndClearOutputs(
             if (!std::equal(
                         raw.begin(),
                         raw.end(),
-                        mine.outputs.begin() + k * step.frameBytes)) {
+                        mine.outputs.begin() + mine.outputOffsets[k])) {
                 throw std::runtime_error(
                         "frame " + std::to_string(mine.first + k) + " of "
-                        + step.name + " decoded to different bytes");
+                        + name + " decoded to different bytes");
             }
         }
         std::fill(mine.outputs.begin(), mine.outputs.end(), '\0');
@@ -577,26 +622,27 @@ double median(std::vector<double> values)
                                   : (values[middle - 1] + values[middle]) / 2;
 }
 
+// frame_bytes is the mean decoded size of the row's frames.
 void printRow(
         const char* backend,
         const char* dctx,
-        const testkit::LadderStep& step,
+        const std::string& name,
         const FrameSet& set,
         size_t parallelism,
         std::vector<double> seconds)
 {
-    const double gib = static_cast<double>(set.count * step.frameBytes) / kGiB;
+    const size_t decodedBytes  = set.decodedBytes();
     const double medianSeconds = median(std::move(seconds));
     std::printf(
             "%s\t%s\t%s\t%zu\t%zu\t%zu\t%.4f\t%.2f\n",
             backend,
             dctx,
-            step.name.c_str(),
+            name.c_str(),
             set.count,
-            step.frameBytes,
+            decodedBytes / set.count,
             parallelism,
             medianSeconds,
-            gib / medianSeconds);
+            static_cast<double>(decodedBytes) / kGiB / medianSeconds);
     std::fflush(stdout);
 }
 
@@ -604,7 +650,7 @@ void printRow(
 // lifetime, with one pool row for each slot count.
 void timeCpu(
         const Options& options,
-        const testkit::LadderStep& step,
+        const std::string& name,
         const FrameSet& set,
         std::vector<ThreadFrames>& placed,
         size_t threads)
@@ -613,16 +659,14 @@ void timeCpu(
         std::vector<double> seconds;
         for (size_t i = 0; i < options.iterations; ++i) {
             seconds.push_back(runPerThread(threads, decode));
-            checkAndClearOutputs(step, set, placed);
+            checkAndClearOutputs(name, set, placed);
         }
-        printRow("cpu", dctx.c_str(), step, set, threads, std::move(seconds));
+        printRow("cpu", dctx.c_str(), name, set, threads, std::move(seconds));
     };
     for (const DCtxLifetime lifetime : options.dctx) {
         if (lifetime != DCtxLifetime::pool) {
             timeRow(lifetime == DCtxLifetime::frame ? "frame" : "thread",
-                    [&](size_t t) {
-                        decodeFrames(placed[t], step.frameBytes, lifetime);
-                    });
+                    [&](size_t t) { decodeFrames(placed[t], lifetime); });
             continue;
         }
         for (const size_t slots : options.poolSlots) {
@@ -632,10 +676,51 @@ void timeCpu(
             }
             DCtxPool pool{ slots };
             timeRow("pool-" + std::to_string(slots), [&](size_t t) {
-                decodeFramesWithPool(
-                        placed[t], step.frameBytes, pool, slotOfThread[t]);
+                decodeFramesWithPool(placed[t], pool, slotOfThread[t]);
             });
         }
+    }
+}
+
+// Warns when some threads get no frames, then times the row for `threads`
+// threads.
+void timeRows(
+        const Options& options,
+        const std::string& name,
+        const FrameSet& set,
+        size_t threads)
+{
+    std::vector<ThreadFrames> placed = placeFrames(set, threads);
+    const auto busy                  = static_cast<size_t>(std::count_if(
+            placed.begin(), placed.end(), [](const ThreadFrames& t) {
+                return t.frames() > 0;
+            }));
+    if (busy < threads) {
+        std::fprintf(
+                stderr,
+                "warning: only %zu of %zu threads have frames of %s\n",
+                busy,
+                threads,
+                name.c_str());
+    }
+    timeCpu(options, name, set, placed, threads);
+}
+
+// Builds the frames of a mixed workload and times --mixed-copies copies of
+// them for every thread count.
+void runMixed(
+        const Options& options,
+        const testkit::MixedWorkload& mix,
+        size_t maxThreads)
+{
+    testkit::MixedFrames frames =
+            testkit::makeMixedFrames(mix, /* seed */ 1, maxThreads);
+    FrameSet set;
+    set.count      = frames.raw.size() * options.mixedCopies;
+    set.raw        = std::move(frames.raw);
+    set.compressed = std::move(frames.compressed);
+    for (const size_t threads : options.threads) {
+        timeRows(options, mix.name, set, threads);
     }
 }
 
@@ -646,8 +731,12 @@ int run(const Options& options)
             "median_s\tgib_per_s\n");
     const size_t maxThreads =
             *std::max_element(options.threads.begin(), options.threads.end());
+    if (options.mixed) {
+        runMixed(options, *options.mixed, maxThreads);
+        return 0;
+    }
     for (const size_t number : options.steps) {
-        testkit::LadderStep step = workloads()[number - 1];
+        testkit::LadderStep step = testkit::allWorkloads()[number - 1];
         if (options.frameBytes) {
             step.frameBytes = *options.frameBytes;
         }
@@ -668,19 +757,7 @@ int run(const Options& options)
             continue;
         }
         for (const size_t threads : options.threads) {
-            if (set.count < threads) {
-                std::fprintf(
-                        stderr,
-                        "warning: %s has %zu frames, so only %zu of %zu "
-                        "threads have work\n",
-                        step.name.c_str(),
-                        set.count,
-                        set.count,
-                        threads);
-            }
-            std::vector<ThreadFrames> placed =
-                    placeFrames(set, step.frameBytes, threads);
-            timeCpu(options, step, set, placed, threads);
+            timeRows(options, step.name, set, threads);
         }
     }
     return 0;

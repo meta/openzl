@@ -21,6 +21,7 @@ cpp_library(
         "frame_verifier.cpp",
         "graph_builders.cpp",
         "int_parses.cpp",
+        "mixed_workload.cpp",
         "multichunk_frame.cpp",
         "nimble_graph.cpp",
         "nimble_workloads.cpp",
@@ -36,6 +37,7 @@ cpp_library(
         "frame_verifier.h",
         "graph_builders.h",
         "int_parses.h",
+        "mixed_workload.h",
         "multichunk_frame.h",
         "nimble_graph.h",
         "nimble_workloads.h",
@@ -53,6 +55,7 @@ cpp_library(
             "frame_verifier.h",
             "graph_builders.h",
             "int_parses.h",
+            "mixed_workload.h",
             "multichunk_frame.h",
             "nimble_graph.h",
             "nimble_workloads.h",
@@ -79,6 +82,7 @@ cpp_library(
         "frame_verifier.h",
         "graph_builders.h",
         "int_parses.h",
+        "mixed_workload.h",
         "multichunk_frame.h",
         "nimble_graph.h",
         "nimble_workloads.h",
@@ -231,6 +235,18 @@ cpp_unittest(
     network_access = network_access_utils.none(),
     deps = [
         "../../..:zstronglib",
+        "../../../cpp:openzl_cpp",
+        "fbsource//third-party/googletest:gtest",
+        ":testkit",
+    ],
+)
+
+cpp_unittest(
+    # @autodeps-skip
+    name = "mixed_workload_test",
+    srcs = ["tests/MixedWorkloadTest.cpp"],
+    network_access = network_access_utils.none(),
+    deps = [
         "../../../cpp:openzl_cpp",
         "fbsource//third-party/googletest:gtest",
         ":testkit",
