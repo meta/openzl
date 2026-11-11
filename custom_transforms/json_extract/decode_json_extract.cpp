@@ -9,6 +9,7 @@
 #include "openzl/zl_dtransform.h"
 #include "openzl/zl_errors.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <string_view>
