@@ -148,6 +148,37 @@ describe('wasm_api', () => {
     assert.deepEqual(out, src);
   });
 
+  it('returns an owned trace on request without changing the compressed frame', () => {
+    const src = new TextEncoder().encode('hello openzl '.repeat(100));
+    const compressor = zl.getSerializedCompressor('serial');
+    const frame = zl.compress(src, compressor);
+    const {compressed, trace} = zl.compressWithTrace(src, compressor);
+    assert.deepEqual(compressed, frame);
+    assert.deepEqual(zl.decompress(compressed), src);
+    assert.ok(trace instanceof Uint8Array);
+    assert.ok(trace.length > 0);
+
+    const saved = trace.slice();
+    zl.compressWithTrace(new Uint8Array(1024), compressor);
+    assert.deepEqual(trace, saved);
+    assert.deepEqual(zl.compress(src, compressor), frame);
+  });
+
+  it('returns an owned trace on request without changing the decompressed bytes', () => {
+    const src = new TextEncoder().encode('hello openzl '.repeat(100));
+    const frame = zl.compress(src, zl.getSerializedCompressor('serial'));
+    const {decompressed, trace} = zl.decompressWithTrace(frame);
+    assert.deepEqual(decompressed, src);
+    assert.ok(trace instanceof Uint8Array);
+    assert.ok(trace.length > 0);
+    assert.deepEqual(zl.decompress(frame), src);
+  });
+
+  it('reports decompression errors when tracing is requested', () => {
+    const frame = zl.compress(new TextEncoder().encode('hello openzl '.repeat(100)), zl.getSerializedCompressor('serial'));
+    assert.throws(() => zl.decompressWithTrace(frame.subarray(0, frame.length - 1)), (error) => error.code > 0);
+  });
+
   function roundTrip(profile, src) {
     const compressor = zl.getSerializedCompressor(profile);
     assert.deepEqual(zl.decompress(zl.compress(src, compressor)), src);

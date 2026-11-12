@@ -143,7 +143,7 @@ void DecompressChunkTrace::on_codecDecode_start(
 }
 
 void DecompressChunkTrace::on_codecDecode_end(
-        ZL_Decoder* /* dictx */,
+        ZL_Decoder* dictx,
         const ZL_Data* const* outStreams,
         size_t nbOutStreams,
         ZL_Report result)
@@ -154,7 +154,7 @@ void DecompressChunkTrace::on_codecDecode_end(
 
     // Record output streams with full metadata from ZL_Data objects
     for (size_t i = 0; i < nbOutStreams; ++i) {
-        StreamID streamID = ZL_Data_id(outStreams[i]);
+        StreamID streamID{ dictx->regensID[i] };
         if (streamInfo_.find(streamID) == streamInfo_.end()) {
             ZL_Type type    = ZL_Data_type(outStreams[i]);
             size_t eltWidth = ZL_Data_eltWidth(outStreams[i]);

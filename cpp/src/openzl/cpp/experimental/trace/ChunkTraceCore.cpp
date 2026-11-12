@@ -307,10 +307,13 @@ ZL_Report ChunkTraceCore::serializeChunkDataToCBOR(
     A1C_ArrayBuilder streamsBuilder = A1C_Item_array_builder(
             &streamsPair->val, streamInfo.size(), a1c_arena);
     ZL_ERR_IF_NULL(streamsBuilder.array, allocation);
+    // Codec edges refer to streams by their position in this array.
+    std::map<ZL_DataID, ZL_IDType, ZL_DataIDCustomComparator> streamIdx;
     for (auto& stream : streamInfo) {
         A1C_ARRAY_TRY_ADD(a1c_stream, streamsBuilder);
         ZL_ERR_IF_ERR(
                 stream.second.serializeStream(a1c_arena, a1c_stream, opCtx));
+        streamIdx.emplace(stream.first, (ZL_IDType)streamIdx.size());
     }
 
     // Codecs
@@ -320,9 +323,19 @@ ZL_Report ChunkTraceCore::serializeChunkDataToCBOR(
             &codecsPair->val, codecInfo.size(), a1c_arena);
     ZL_ERR_IF_NULL(codecsBuilder.array, allocation);
     for (size_t codecNum = 0; codecNum < codecInfo.size(); ++codecNum) {
-        Codec& codec = codecInfo[codecNum];
         A1C_ARRAY_TRY_ADD(a1c_codec, codecsBuilder);
-        ZL_ERR_IF_ERR(codec.serializeCodec(a1c_arena, a1c_codec, opCtx));
+        Codec& codec  = codecInfo[codecNum];
+        auto inEdges  = codec.inEdges;
+        auto outEdges = codec.outEdges;
+        for (auto* edges : { &codec.inEdges, &codec.outEdges }) {
+            for (auto& edge : *edges) {
+                edge.sid = streamIdx.at(edge);
+            }
+        }
+        ZL_Report report = codec.serializeCodec(a1c_arena, a1c_codec, opCtx);
+        codec.inEdges    = std::move(inEdges);
+        codec.outEdges   = std::move(outEdges);
+        ZL_ERR_IF_ERR(report);
     }
 
     // Graphs (empty array for decompress)
