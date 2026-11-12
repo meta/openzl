@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -397,6 +398,7 @@ void expectGpuDecodeMatchesCpuEncode(
             workspace.size(),
             nullptr);
     ASSERT_FALSE(ZL_isError(decodeReport));
+    EXPECT_EQ(ZL_validResult(decodeReport), data.size());
     EXPECT_EQ(copyBytesFromDevice(decoded, data.size()), data);
 
     pivcoGpuContextDestroy(context);
@@ -983,6 +985,95 @@ TEST(PivCoGpuTest, GpuDecodeRejectsBadOffsets)
     EXPECT_TRUE(ZL_isError(report));
 
     pivcoGpuContextDestroy(context);
+}
+
+struct TerminalRankCase {
+    size_t sourceSize;
+    size_t zeroPosition;
+};
+
+class PivCoGpuTerminalRankTest
+        : public testing::TestWithParam<TerminalRankCase> {};
+
+TEST_P(PivCoGpuTerminalRankTest, CpuWireBoundary)
+{
+    constexpr size_t kBlockSize     = 64 * 1024;
+    const TerminalRankCase testCase = GetParam();
+    const std::vector<uint8_t> weights{ 4, 3, 2, 1, 1 };
+    std::vector<uint8_t> data(testCase.sourceSize, 4);
+    if (testCase.zeroPosition < data.size()) {
+        data[testCase.zeroPosition] = 0;
+    }
+
+    // The rightmost symbol sets every internal bitmap bit. One leftmost
+    // symbol keeps the root at 65535 ones while moving the zero across word
+    // boundaries; a partial all-one block also exercises the masked last word.
+    expectGpuDecodeMatchesCpuEncode(weights, data, kBlockSize);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        TerminalRank,
+        PivCoGpuTerminalRankTest,
+        testing::Values(
+                TerminalRankCase{ 65535, SIZE_MAX },
+                TerminalRankCase{ 65536, SIZE_MAX },
+                TerminalRankCase{ 65536, 0 },
+                TerminalRankCase{ 65536, 31 },
+                TerminalRankCase{ 65536, 32 },
+                TerminalRankCase{ 65536, 65503 },
+                TerminalRankCase{ 65536, 65504 },
+                TerminalRankCase{ 65536, 65535 }));
+
+TEST(PivCoGpuTest, CooperativeDecodeCpuWireFullBlockAllOnes)
+{
+    constexpr size_t kBlockSize = 64 * 1024;
+    const std::vector<uint8_t> weights{ 4, 3, 2, 1, 1 };
+    // A constant source under a nonconstant context takes every right branch.
+    // Its first block has 65536 ones in each internal-node bitmap; the tail
+    // verifies that independent block offsets and partial endpoints still work.
+    const std::vector<uint8_t> data(kBlockSize + 65, 4);
+    const Encoded expected = cpuEncode(weights, data, kBlockSize);
+    ASSERT_EQ(
+            cpuDecode(weights, expected.bytes, data.size(), kBlockSize), data);
+    std::unique_ptr<PivCoGpuContext, decltype(&pivcoGpuContextDestroy)> context(
+            createContext(weights), pivcoGpuContextDestroy);
+    ASSERT_NE(context.get(), nullptr);
+    ASSERT_EQ(context->hostTree.fastMode, PIVCO_GPU_FAST_NONE);
+    ASSERT_NE(context->decodeSchedule.enabled, 0);
+    DeviceBuffer<uint8_t> encoded, decoded, workspace;
+    DeviceBuffer<uint64_t> offsets;
+    ASSERT_EQ(
+            cudaSuccess,
+            encoded.reset(expected.bytes.size() + PIVCO_GPU_DECODE_SRC_SLOP));
+    ASSERT_EQ(
+            cudaSuccess,
+            cudaMemcpy(
+                    encoded.get(),
+                    expected.bytes.data(),
+                    expected.bytes.size(),
+                    cudaMemcpyHostToDevice));
+    copyToDevice(offsets, expected.offsets);
+    ASSERT_EQ(
+            cudaSuccess,
+            decoded.reset(data.size() + PIVCO_GPU_DECODE_DST_SLOP));
+    ASSERT_EQ(
+            cudaSuccess,
+            workspace.reset(
+                    pivcoGpuDecodeWorkspaceBytes(data.size(), kBlockSize)));
+    const ZL_Report report = pivcoGpuDecode(
+            context.get(),
+            decoded.get(),
+            data.size(),
+            encoded.get(),
+            expected.bytes.size(),
+            offsets.get(),
+            offsets.size(),
+            kBlockSize,
+            workspace.get(),
+            workspace.size(),
+            nullptr);
+    ASSERT_FALSE(ZL_isError(report));
+    EXPECT_EQ(copyBytesFromDevice(decoded, data.size()), data);
 }
 
 } // namespace
