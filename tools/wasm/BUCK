@@ -26,6 +26,7 @@ zs_library(
     link_whole = True,
     deps = [
         "../../cli/utils:profile_graphs",
+        "../../cpp:openzl_cpp",
         "../../custom_parsers:custom_parsers",
         "../training:train",
     ],

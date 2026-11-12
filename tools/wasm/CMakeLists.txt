@@ -21,6 +21,7 @@ if(NOT EMSCRIPTEN)
     target_link_libraries(openzl_wasm_lib
       PRIVATE
         openzl
+        openzl_cpp
         openzl_profile_graphs
         tools_training
         custom_parsers
@@ -81,6 +82,7 @@ target_include_directories(openzl_wasm PRIVATE
 target_link_libraries(openzl_wasm
   PRIVATE
     openzl
+    openzl_cpp
     openzl_profile_graphs
     tools_training
     custom_parsers

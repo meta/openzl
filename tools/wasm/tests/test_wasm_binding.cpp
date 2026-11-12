@@ -337,6 +337,46 @@ TEST(WasmBindingTest, SerialRoundTrip)
     expectRoundTrip(makeSerialData(4096), OPENZL_WASM_PROFILE_SERIAL);
 }
 
+TEST(WasmBindingTest, TraceOutputAddressesMustBePaired)
+{
+    std::vector<uint8_t> compressor;
+    ASSERT_EQ(
+            serializedCompressor(OPENZL_WASM_PROFILE_SERIAL, &compressor),
+            ZL_ErrorCode_no_error);
+    const auto src = makeSerialData(4096);
+    std::vector<uint8_t> frame;
+    ASSERT_EQ(compress(src, compressor, &frame), ZL_ErrorCode_no_error);
+
+    uint8_t* buf     = nullptr;
+    size_t size      = 0;
+    uint8_t* trace   = nullptr;
+    size_t traceSize = 0;
+    for (const bool includeTraceAddress : { false, true }) {
+        uint8_t** outTrace   = includeTraceAddress ? &trace : nullptr;
+        size_t* outTraceSize = includeTraceAddress ? nullptr : &traceSize;
+        EXPECT_EQ(
+                openzl_wasm_compressWithTrace(
+                        compressor.data(),
+                        compressor.size(),
+                        src.data(),
+                        src.size(),
+                        &buf,
+                        &size,
+                        outTrace,
+                        outTraceSize),
+                ZL_ErrorCode_parameter_invalid);
+        EXPECT_EQ(
+                openzl_wasm_decompressWithTrace(
+                        frame.data(),
+                        frame.size(),
+                        &buf,
+                        &size,
+                        outTrace,
+                        outTraceSize),
+                ZL_ErrorCode_parameter_invalid);
+    }
+}
+
 TEST(WasmBindingTest, LzRoundTrip)
 {
     expectRoundTrip(makeSerialData(4096), OPENZL_WASM_PROFILE_LZ);
