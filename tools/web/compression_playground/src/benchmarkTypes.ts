@@ -104,6 +104,11 @@ export interface JobResult extends BenchmarkMetrics {
   readonly candidate: Candidate | null;
 }
 
+export interface OpenZLJobResult extends JobResult {
+  readonly job: OpenZlBenchmarkJob;
+  readonly serializedCompressor: Uint8Array;
+}
+
 export interface JobFailure {
   readonly job: BenchmarkJob;
   /**
@@ -164,7 +169,7 @@ export type WorkerMessage =
   | {readonly type: 'loading'}
   | {readonly type: 'started'; readonly totalJobs: number; readonly rejected: readonly RejectedCompressor[]}
   | {readonly type: 'step'; readonly fraction: number}
-  | {readonly type: 'result'; readonly result: JobResult}
+  | {readonly type: 'result'; readonly result: JobResult | OpenZLJobResult}
   | {readonly type: 'failure'; readonly failure: JobFailure}
   | {readonly type: 'finished'}
   | {readonly type: 'failed'; readonly message: string}
