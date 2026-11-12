@@ -81,6 +81,11 @@ TEST_F(CompilerTest, UnaryNegation)
     expect_success(prog);
 }
 
+TEST_F(CompilerTest, FieldAtEndOfFile)
+{
+    expect_success(": Byte");
+}
+
 TEST_F(CompilerTest, NonAsciiByteInSourceDoesNotCrash)
 {
     // A non-ASCII byte anywhere in the source (comments included) is embedded

@@ -14,9 +14,10 @@ TEST_F(ParserTest, ErrorMsgOpsMissingArgs)
     expect_error("= foo\n", "Rule requires a lhs arg but none found.");
 }
 
-TEST_F(ParserTest, ErrorMsgEmptyExpr)
+TEST_F(ParserTest, ErrorMsgCallMissingCallee)
 {
-    expect_error("()", "Empty expression");
+    expect_error("()", "Rule requires a lhs arg but none found.");
+    expect_error("()\n", "Rule requires a lhs arg but none found.");
 }
 
 TEST_F(ParserTest, ErrorMsgNoOperatorBetweenSubExpressions)
@@ -170,6 +171,16 @@ TEST_F(ParserTest, ArrayAST)
               cg.consume(cg.array(cg.builtin_field(Symbol::BYTE))) });
 
     expect_ast(prog, expected);
+}
+
+TEST_F(ParserTest, ArrayAtEndOfFileAST)
+{
+    const auto cg = Codegen();
+    for (const auto suffix : { "", " ", " # comment", "\n" }) {
+        expect_ast(
+                std::string(": Byte[]") + suffix,
+                { cg.consume(cg.array(cg.builtin_field(Symbol::BYTE))) });
+    }
 }
 
 TEST_F(ParserTest, RecordAST)
