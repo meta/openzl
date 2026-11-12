@@ -52,6 +52,18 @@ TEST_F(BitsplitBF16Test, BF16_RoundTrip)
     testBitsplitBF16RoundTrip(input);
 }
 
+TEST_F(BitsplitBF16Test, BF16_NegativeRoundTrip)
+{
+    // Sweep through a range of negative normal bf16 values
+    std::vector<uint16_t> input(1000);
+    for (size_t i = 0; i < input.size(); i++) {
+        // Range from small negative normals to larger ones
+        // bf16 exponent field starts at bit 7, normal range [0x0080..0x7F7F]
+        input[i] = static_cast<uint16_t>(0x8000 | (0x0080 + (i % 0x7F00)));
+    }
+    testBitsplitBF16RoundTrip(input);
+}
+
 TEST_F(BitsplitBF16Test, BF16_AllZero)
 {
     std::vector<uint16_t> input(1000, 0x0000);
