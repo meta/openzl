@@ -12,6 +12,7 @@ on:
     branches: [dev]
     paths:
       - 'contrib/gpu/**'
+      - 'contrib/pivco-huffman/gpu/**'
       # openzl_gpu links the core and the C++ bindings. The testkit uses
       # tests/utils.h and openzl_test_support.
       - 'src/**'
@@ -25,6 +26,7 @@ on:
     branches: [dev, master, actionsTest]
     paths:
       - 'contrib/gpu/**'
+      - 'contrib/pivco-huffman/gpu/**'
       # openzl_gpu links the core and the C++ bindings. The testkit uses
       # tests/utils.h and openzl_test_support.
       - 'src/**'
@@ -60,3 +62,14 @@ jobs:
 
       - name: Build
         run: cmake --build build-gpu -j$(getconf _NPROCESSORS_ONLN)
+
+      - name: Configure standalone PivCo GPU build
+        run: >-
+          cmake -S contrib/pivco-huffman/gpu -B build-pivco-gpu
+          -DCMAKE_BUILD_TYPE=Release -DOPENZL_BUILD_MODE=none
+          -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc
+          '-DCMAKE_CUDA_ARCHITECTURES=75;80;86'
+          -DPIVCO_GPU_BUILD_TESTS=ON -DPIVCO_GPU_BUILD_BENCHMARKS=ON
+
+      - name: Build standalone PivCo GPU targets
+        run: cmake --build build-pivco-gpu --parallel 2

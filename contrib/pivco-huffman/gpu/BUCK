@@ -34,6 +34,7 @@ cpp_library(
     ],
     headers = relative_headers([
         "pivco_gpu.cuh",
+        "pivco_gpu_cooperative.cuh",
         "pivco_gpu.h",
         "pivco_gpu_tree.h",
     ]),
@@ -72,6 +73,42 @@ gpu_cpp_unittest(
     # "out of memory" (error 2) on the very first allocation.
     env = {
         "ASAN_OPTIONS": "protect_shadow_gap=0",
+        "PIVCO_CHUNK_TD": "1",
+    },
+    # The hipified host translation unit includes <hip/hip_runtime.h>, which only
+    # declares the host runtime APIs (hipMalloc/hipFree/hipMemcpy/...) once a HIP
+    # platform macro is defined. gpu_cpp_unittest already injects the amdhip64
+    # runtime dep for the AMD leg; this defines the macro so the host compile of
+    # the hipified test resolves those symbols.
+    hip_preprocessor_flags = ["-D__HIP_PLATFORM_AMD__=1"],
+    keep_gpu_sections = True,
+    labels = ci.labels(ci.remove(ci.aarch64())),
+    network_access = network_access_utils.none(),
+    nvcc_flags = nvcc_flags,
+    remote_execution = re_test_utils.remote_execution(
+        platform = "gpu-remote-execution",
+        subplatform = "A100",
+    ),
+    deps = [
+        "../../..:zstronglib",
+        "fbsource//third-party/googletest:gtest",
+        ":pivco_gpu",
+        ":pivco_gpu_cpu_index",
+    ],
+    external_deps = [
+        ("cuda", None, "cuda-lazy"),
+    ],
+)
+gpu_cpp_unittest(
+    # @autodeps-skip
+    name = "pivco_gpu_test_cascade",
+    srcs = ["PivCoGpuTest.cpp"],
+    # protect_shadow_gap=0: under ASAN the shadow-gap reservation collides with
+    # the CUDA driver's address-space reservation, making cudaMalloc fail with
+    # "out of memory" (error 2) on the very first allocation.
+    env = {
+        "ASAN_OPTIONS": "protect_shadow_gap=0",
+        "PIVCO_CHUNK_TD": "0",
     },
     # The hipified host translation unit includes <hip/hip_runtime.h>, which only
     # declares the host runtime APIs (hipMalloc/hipFree/hipMemcpy/...) once a HIP
