@@ -237,6 +237,25 @@ ZL_ErrorCode openzl_wasm_compress(
         size_t* outSize);
 
 /**
+ * Similar to openzl_wasm_compress(), with optional tracing.
+ *
+ * Pass NULL for both trace parameters to disable tracing.
+ *
+ * @param outTrace        On success, an owned CBOR trace with stream previews,
+ *                        release with openzl_wasm_free().
+ * @param outTraceSize    On success, the length of @p outTrace.
+ */
+ZL_ErrorCode openzl_wasm_compressWithTrace(
+        const uint8_t* compressor,
+        size_t compressorSize,
+        const uint8_t* src,
+        size_t srcSize,
+        uint8_t** outBuf,
+        size_t* outSize,
+        uint8_t** outTrace,
+        size_t* outTraceSize);
+
+/**
  * Reads the decompressed size recorded in the frame header.
  *
  * It is exposed for callers that want the size before committing to the
@@ -263,6 +282,23 @@ ZL_ErrorCode openzl_wasm_decompress(
         size_t srcSize,
         uint8_t** outBuf,
         size_t* outSize);
+
+/**
+ * Similar to openzl_wasm_decompress(), with optional tracing.
+ *
+ * Pass NULL for both trace parameters to disable tracing.
+ *
+ * @param outTrace      On success, an owned CBOR trace with stream previews,
+ *                      release with openzl_wasm_free().
+ * @param outTraceSize  On success, the length of @p outTrace.
+ */
+ZL_ErrorCode openzl_wasm_decompressWithTrace(
+        const uint8_t* src,
+        size_t srcSize,
+        uint8_t** outBuf,
+        size_t* outSize,
+        uint8_t** outTrace,
+        size_t* outTraceSize);
 
 /**
  * Benchmarks compression reusing one deserialized compressor and one CCtx
