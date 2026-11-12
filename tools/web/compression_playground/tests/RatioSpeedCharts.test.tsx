@@ -3,7 +3,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import {useState} from 'react';
-import {afterEach, beforeAll, describe, expect, it} from 'vitest';
+import {afterEach, beforeAll, describe, expect, it, vi} from 'vitest';
 import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {ChakraProvider} from '@chakra-ui/react';
 import RatioSpeedCharts from '../src/components/RatioSpeedCharts.tsx';
@@ -26,7 +26,11 @@ beforeAll(() => {
   });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function result(
   job: Partial<BenchmarkJob> & Pick<BenchmarkJob, 'compressor'>,
@@ -124,6 +128,47 @@ describe('RatioSpeedCharts', () => {
     const {container} = await renderPlotted();
     // Two charts, four measurements each.
     expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(8);
+  });
+
+  it('downloads the hovered candidate compressor with its filename', async () => {
+    const compressor = new Uint8Array([0, 255, 42]);
+    const measurement = {...RESULTS[1], serializedCompressor: compressor};
+    const createObjectURL = vi.fn<(blob: Blob) => string>().mockReturnValue('blob:compressor');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = createObjectURL;
+        static revokeObjectURL = revokeObjectURL;
+      },
+    );
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.href).toBe('blob:compressor');
+      expect(this.download).toBe('serial-trained-2.zlc');
+    });
+    const {container} = await renderPlotted([RESULTS[0], measurement]);
+
+    fireEvent.mouseEnter(container.querySelectorAll('.recharts-scatter-symbol')[0]);
+    await screen.findByText('OpenZL serial #1');
+    expect(screen.queryByRole('button', {name: 'Download compressor'})).not.toBeInTheDocument();
+
+    fireEvent.mouseEnter(container.querySelectorAll('.recharts-scatter-symbol')[1]);
+    const button = await screen.findByRole('button', {name: 'Download compressor'});
+    vi.useFakeTimers();
+    fireEvent.click(button);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    vi.runAllTimers();
+    vi.useRealTimers();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:compressor');
+
+    expect(click).toHaveBeenCalledOnce();
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    const contents = await new Promise<ArrayBuffer>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.readAsArrayBuffer(createObjectURL.mock.calls[0][0]);
+    });
+    expect(new Uint8Array(contents)).toEqual(compressor);
   });
 
   it('draws untrained OpenZL points without connecting lines', async () => {
