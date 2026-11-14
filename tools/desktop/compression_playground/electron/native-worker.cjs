@@ -37,7 +37,7 @@
 const fs = require('node:fs/promises');
 const {performance} = require('node:perf_hooks');
 const zlib = require('node:zlib');
-const {measureOpenZL} = require('./zli-client.cjs');
+const {checkInputPath, measureOpenZL} = require('./zli-client.cjs');
 
 /**
  * The codecs are synchronous, so the worker yields between timed iterations to
@@ -232,15 +232,18 @@ async function* measure(job, {zliPath, inputPath, readInput, tempRoot, onStep, s
  */
 async function run({zliPath, config, tempRoot}, post, {signal, onChild} = {}) {
   post({type: 'loading'});
+  // Once for the whole run, so a path zli cannot read fails the run before any
+  // job starts rather than failing every job.
+  const inputPath = await checkInputPath(config.input.path, {tempRoot});
   const {jobs, rejected} = planJobs(config);
   post({type: 'started', totalJobs: jobs.length, rejected});
   /** @type {Promise<Buffer> | undefined} */
   let input;
   // Only zstd and gzip need the bytes; zli reads the file itself.
-  const readInput = () => (input ??= fs.readFile(config.input.path));
+  const readInput = () => (input ??= fs.readFile(inputPath));
   /** @param {number} fraction */
   const onStep = (fraction) => post({type: 'step', fraction});
-  const context = {zliPath, inputPath: config.input.path, readInput, tempRoot, onStep, signal, onChild};
+  const context = {zliPath, inputPath, readInput, tempRoot, onStep, signal, onChild};
   for (const job of jobs) {
     signal?.throwIfAborted();
     try {

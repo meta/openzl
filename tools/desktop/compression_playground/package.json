@@ -26,6 +26,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
+    "iconv-lite": "0.6.3",
     "zod": "4.6.5"
   },
   "devDependencies": {
@@ -74,6 +75,10 @@
       {
         "from": "electron/zli-client.cjs",
         "to": "native/zli-client.cjs"
+      },
+      {
+        "from": "electron/ansi-path.cjs",
+        "to": "native/ansi-path.cjs"
       }
     ],
     "asar": true,
