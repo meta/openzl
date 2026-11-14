@@ -120,9 +120,13 @@ export interface GzipRow extends LeveledRowBase {
 
 export type CompressorRow = OpenZlRow | ZstdRow | GzipRow;
 
-export function createCompressorRow(id: number, compressor: 'OpenZL'): OpenZlRow;
-export function createCompressorRow(id: number, compressor: CompressorName): CompressorRow;
-export function createCompressorRow(id: number, compressor: CompressorName): CompressorRow {
+export function createCompressorRow(id: number, compressor: 'OpenZL', candidates?: number): OpenZlRow;
+export function createCompressorRow(id: number, compressor: CompressorName, candidates?: number): CompressorRow;
+export function createCompressorRow(
+  id: number,
+  compressor: CompressorName,
+  candidates = DEFAULT_TRAINED_CANDIDATES,
+): CompressorRow {
   if (compressor === 'OpenZL') {
     return {
       id,
@@ -130,7 +134,7 @@ export function createCompressorRow(id: number, compressor: CompressorName): Com
       level: OPENZL_DEFAULT_LEVEL,
       profile: DEFAULT_OPENZL_PROFILE,
       trainRequested: true,
-      candidates: DEFAULT_TRAINED_CANDIDATES,
+      candidates,
       optionsOpen: true,
     };
   }
