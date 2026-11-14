@@ -3,7 +3,7 @@
 'use strict';
 
 /**
- * @import {DesktopProfile} from '../../../web/compression_playground/src/desktop.ts'
+ * @import {DesktopProfile} from '../../../tools/web/compression_playground/src/desktop.ts'
  * @import {ListedProfile} from './zli-client.cjs'
  */
 

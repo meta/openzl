@@ -17,7 +17,7 @@ The browser build remains useful for the documentation site. Profiles that need 
 
 ## Desktop app
 
-The Electron desktop app, which renders this page and benchmarks with the native OpenZL CLI, lives in `tools/desktop/compression_playground`. See its README.
+The Electron desktop app, which renders this page and benchmarks with the native OpenZL CLI, lives in `contrib/desktop_compression_playground`. See its README.
 
 Shared code lives in `@openzl/web-common`. Shared build config (TypeScript, ESLint, Prettier) lives at the workspace root (`dev/tools/web`).
 

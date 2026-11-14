@@ -5,8 +5,8 @@
 'use strict';
 
 /**
- * @import {RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts'
- * @import {DesktopRunConfig} from '../../../web/compression_playground/src/desktop.ts'
+ * @import {RunMessage} from '../../../tools/web/compression_playground/src/benchmarkTypes.ts'
+ * @import {DesktopRunConfig} from '../../../tools/web/compression_playground/src/desktop.ts'
  */
 
 const {contextBridge, ipcRenderer, webUtils} = require('electron');
