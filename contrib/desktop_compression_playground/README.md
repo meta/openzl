@@ -4,7 +4,7 @@ The playground has a browser build and an Electron desktop build. The desktop ap
 
 ## Getting started
 
-You need Node 24, Yarn 1, CMake and a C/C++ toolchain; on Windows, Visual Studio with its "C++ Clang tools for Windows" component. From `tools/desktop/compression_playground`:
+You need Node 24, Yarn 1, CMake and a C/C++ toolchain; on Windows, Visual Studio with its "C++ Clang tools for Windows" component. From `contrib/desktop_compression_playground`:
 
 ```bash
 yarn install
