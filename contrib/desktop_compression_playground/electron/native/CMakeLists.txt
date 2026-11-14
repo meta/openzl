@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.20.2 FATAL_ERROR)
 project(openzl_playground_cli CXX)
 
-get_filename_component(OPENZL_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../.." ABSOLUTE)
+get_filename_component(OPENZL_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLUTE)
 
 # The desktop bundle only ships zli and zstd-benchmark; skip the other
 # standalone deliverables.
