@@ -7,7 +7,7 @@ import fsPromises from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {checkInputPath, measureOpenZL, measureZstd, type ZliChildEvent} from '../electron/zli-client.cjs';
+import {checkInputPath, listProfiles, measureOpenZL, measureZstd, type ZliChildEvent} from '../electron/zli-client.cjs';
 import {
   csvZli,
   FAKE_ZSTD_BENCHMARK,
@@ -27,6 +27,7 @@ afterEach(() => {
   delete process.env.FAKE_ZLI_PATH_COLUMN;
   delete process.env.FAKE_ZLI_FAIL;
   delete process.env.FAKE_ZLI_INPUTS;
+  delete process.env.FAKE_ZLI_ARGS;
   removeFakeZlis();
 });
 
@@ -324,6 +325,35 @@ describe('measureZstd', () => {
 
     await expect(measureZstd(malformed, inputFile(), {level: 3, iterations: 1})).rejects.toThrow(
       'zstd-benchmark returned an unexpected result (srcSize:',
+    );
+  });
+});
+
+describe('listProfiles', () => {
+  it('lists every profile zli prints, with its description, from either stream', async () => {
+    const zli = fakeZli(`
+process.stdout.write('Available profiles:\\n  -| serial  = Serial data (aka raw bytes)\\n');
+process.stderr.write('  -| csv = CSV, with a separator given by --profile-arg\\r\\n');
+`);
+
+    await expect(listProfiles(zli)).resolves.toEqual([
+      {name: 'serial', description: 'Serial data (aka raw bytes)'},
+      {name: 'csv', description: 'CSV, with a separator given by --profile-arg'},
+    ]);
+  });
+
+  it("fails with zli's own message when it fails, or when it lists nothing", async () => {
+    await expect(listProfiles(fakeZli("process.stderr.write('No such command\\n'); process.exit(1);"))).rejects.toThrow(
+      'No such command',
+    );
+    await expect(listProfiles(fakeZli("process.stdout.write('Available profiles:\\n');"))).rejects.toThrow(
+      'zli list-profiles listed no profiles',
+    );
+  });
+
+  it('gives up on a zli that does not finish', async () => {
+    await expect(listProfiles(fakeZli('setInterval(() => {}, 1000);'), {timeoutMs: 200})).rejects.toThrow(
+      'zli list-profiles did not finish within 0.2 s',
     );
   });
 });

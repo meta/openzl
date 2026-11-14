@@ -5,12 +5,20 @@
 'use strict';
 
 /**
- * @import {BenchmarkJob, DesktopRunConfig, RejectedCompressor, RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts'
+ * @import {BenchmarkJob, RejectedCompressor, RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts'
+ * @import {DesktopRunConfig} from '../../../web/compression_playground/src/desktop.ts'
  * @import {BenchmarkResult as BenchmarkMetrics} from '../../../wasm/js/wasm_api.js'
  * @import {ZliChildEvent, ZliMeasurement} from './zli-client.cjs'
  */
 
 /** @typedef {Extract<RunMessage, {type: 'result' | 'failure'}>} Measurement */
+
+/**
+ * The run the worker is given: the main process has resolved the bundled
+ * sample, if that was asked for, to the path it is installed at.
+ *
+ * @typedef {Omit<DesktopRunConfig, 'input'> & {input: {path: string}}} ResolvedRunConfig
+ */
 
 /**
  * What the worker sends the main process: the run's messages, each zli process
@@ -116,7 +124,7 @@ function messageOf(error) {
  * the page's to decide: it only offers those this build's `zli` can run, and
  * one that cannot is reported by `zli` itself.
  *
- * @param {DesktopRunConfig} config
+ * @param {ResolvedRunConfig} config
  * @returns {{jobs: BenchmarkJob[]; rejected: RejectedCompressor[]}}
  */
 function planJobs(config) {
@@ -138,7 +146,12 @@ function planJobs(config) {
       };
       jobs.push(
         compressor.compressor === 'OpenZL'
-          ? {...base, compressor: 'OpenZL', profile: compressor.profile, training: compressor.training}
+          ? {
+              ...base,
+              compressor: 'OpenZL',
+              profile: compressor.profile,
+              training: compressor.training,
+            }
           : {...base, compressor: compressor.compressor},
       );
     }
@@ -192,7 +205,7 @@ async function* measure(job, {zliPath, zstdBenchmarkPath, inputPath, readInput, 
  * time, since these are wall-clock timings. A failed job does not stop the run;
  * only cancelling does, and then run() rejects with the signal's reason.
  *
- * @param {{zliPath: string; zstdBenchmarkPath: string; config: DesktopRunConfig; tempRoot?: string}} payload
+ * @param {{zliPath: string; zstdBenchmarkPath: string; config: ResolvedRunConfig; tempRoot?: string}} payload
  * @param {(message: RunMessage) => void} post
  * @param {RunOptions} [options]
  */
