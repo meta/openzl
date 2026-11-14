@@ -71,12 +71,18 @@ async function main() {
     require: 'undefined',
     process: 'undefined',
     module: 'undefined',
-    bridge: ['getPathForFile', 'startBenchmark'],
+    bridge: ['getPathForFile', 'listProfiles', 'startBenchmark'],
     bridgeFrozen: true,
     origin: 'app://bundle',
     rendered: true,
     permissions: {notifications: 'denied', geolocation: 'denied', camera: 'denied', microphone: 'denied'},
   });
+
+  // The profile list comes from the bundled zli, over the same trusted-sender IPC.
+  const profiles = await window.webContents.executeJavaScript(
+    'window.openzlDesktop.listProfiles().then((list) => list.map((profile) => profile.name))',
+  );
+  assert.ok(profiles.includes('serial') && profiles.includes('csv'), `zli listed ${profiles}`);
 
   // Stubbed after startup: main.cjs calls shell.openExternal through the shared module object.
   const {shell} = require('electron');

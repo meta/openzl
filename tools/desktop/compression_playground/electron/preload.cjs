@@ -4,7 +4,10 @@
 
 'use strict';
 
-/** @import {DesktopRunConfig, RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts' */
+/**
+ * @import {RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts'
+ * @import {DesktopRunConfig} from '../../../web/compression_playground/src/desktop.ts'
+ */
 
 const {contextBridge, ipcRenderer, webUtils} = require('electron');
 
@@ -53,5 +56,6 @@ contextBridge.exposeInMainWorld(
   Object.freeze({
     startBenchmark,
     getPathForFile: (/** @type {File} */ file) => webUtils.getPathForFile(file),
+    listProfiles: () => ipcRenderer.invoke('openzl:list-profiles'),
   }),
 );

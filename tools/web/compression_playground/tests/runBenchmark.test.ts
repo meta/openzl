@@ -299,7 +299,7 @@ describe('runBenchmark', () => {
     expect(states.at(-1)).toMatchObject({step: null});
   });
 
-  it('keeps a step inside its own job, whatever the trainer reports', async () => {
+  it('keeps a step inside its own job and never moves it back, whatever the trainer reports', async () => {
     // Past 1 it would run the bar into the next job's share.
     const {runBenchmark} = await freshModule();
     const states: RunState[] = [];
@@ -308,13 +308,17 @@ describe('runBenchmark', () => {
     const [worker] = FakeWorker.instances;
     worker.emit('message', {data: {type: 'started', totalJobs: 2, rejected: []}});
 
-    worker.emit('message', {data: {type: 'step', fraction: 1.7}});
-    expect(states.at(-1)).toMatchObject({step: 1});
     worker.emit('message', {data: {type: 'step', fraction: -0.2}});
     expect(states.at(-1)).toMatchObject({step: 0});
     worker.emit('message', {data: {type: 'step', fraction: 0.4}});
     worker.emit('message', {data: {type: 'step', fraction: Number.NaN}});
     expect(states.at(-1)).toMatchObject({step: 0.4});
+    // Nor back: a trainer whose next phase starts again from 0 would move the
+    // bar backwards.
+    worker.emit('message', {data: {type: 'step', fraction: 0.1}});
+    expect(states.at(-1)).toMatchObject({step: 0.4});
+    worker.emit('message', {data: {type: 'step', fraction: 1.7}});
+    expect(states.at(-1)).toMatchObject({step: 1});
   });
 
   it('keeps one worker across runs that end normally', async () => {
