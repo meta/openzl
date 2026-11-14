@@ -21,6 +21,7 @@ On Windows, some dependencies' build paths exceed the path length limit, so chec
 yarn typecheck && yarn lint && yarn test:run
 yarn test:native     # trains and benchmarks with the built zli
 yarn test:security   # needs a display (Xvfb on Linux)
+yarn test:packaged   # packs the app first; needs a display
 yarn build           # the platform installer, under release/
 yarn package         # the unpacked app, under release/
 ```
@@ -29,7 +30,7 @@ yarn package         # the unpacked app, under release/
 
 ACE trains against the complete selected file (`zli train --use-all-samples --pareto-frontier`), and each candidate is then benchmarked with the requested level and iteration count. OpenZL runs in ordinary `zli` processes, so its allocations do not pass through Electron's allocator. Every input is a file on disk, which `zli` reads where it is; only `zli`'s CSV and candidate files go in a scratch directory.
 
-The security boundary is deliberately small: the renderer has no Node access. An isolated preload exposes file-path resolution and one validated benchmark IPC call. Browser permission requests are denied, and only `https://openzl.org` links leave the app, opening in the system browser. An Electron utility process coordinates benchmark work, while OpenZL itself runs in `zli` child processes so a native failure cannot terminate the desktop UI.
+The security boundary is deliberately small: the renderer has no Node access. An isolated preload exposes file-path resolution and one validated benchmark IPC call. Browser permission requests are denied, and only `https://openzl.org` links leave the app, opening in the system browser. The packaged renderer is served from a custom `app://bundle` origin rather than `file://`, and IPC is accepted only from that origin. The packaged binary's Electron fuses disable running as Node (`ELECTRON_RUN_AS_NODE`), `NODE_OPTIONS`, `--inspect`, and extra `file://` privileges, and only load the app from its asar archive. An Electron utility process coordinates benchmark work, while OpenZL itself runs in `zli` child processes so a native failure cannot terminate the desktop UI.
 
 The backend speaks the browser's protocol, with the browser's types (`tools/web/compression_playground/src/benchmarkTypes.ts`). It takes a `DesktopRunConfig`, which is `RunConfig` with the input named by its path, splits it into the same jobs `buildJobs` does, and posts the worker's `WorkerMessage`s: `loading`, `started` with the job count, a `result` per measurement or a `failure` for a job it could not measure, then `finished` or `failed`. A trained job yields one `result` per candidate, counted from 1, best ratio first; a candidate that cannot be benchmarked is a `failure` naming it, and its siblings are still measured. As in the browser, a job that fails is reported and the run goes on to the next. The Electron code is CommonJS checked by TypeScript (`checkJs`), with those types imported in JSDoc, so `yarn typecheck` fails if the two builds drift apart. The request is checked for its shape only: which levels, candidate counts and so on are valid is for `zli` and zlib to say, and a job they refuse is reported like any other failure.
 
