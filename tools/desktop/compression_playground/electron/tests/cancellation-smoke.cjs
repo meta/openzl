@@ -18,6 +18,30 @@ const path = require('node:path');
 const ZLI = path.resolve(__dirname, '..', 'native', 'build', 'Release', 'zli');
 const SCENARIOS = ['cancel', 'reload', 'kill-worker', 'quit'];
 const GONE_WITHIN_MS = 4000;
+const START_TIMEOUT_MS = 30_000;
+
+/**
+ * @param {Promise<void>} started
+ * @param {Promise<void>} done
+ * @param {number} timeoutMs
+ */
+async function waitForStarted(started, done, timeoutMs = 30_000) {
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timeout;
+  try {
+    await Promise.race([
+      started,
+      done.then(() => {
+        throw new Error('The benchmark finished before the renderer received started');
+      }),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('The renderer never received benchmark started')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -85,9 +109,17 @@ async function harness(scenario, sample) {
     ],
   };
   await window.webContents.executeJavaScript(`
-    window.testRun = window.openzlDesktop.startBenchmark(${JSON.stringify(request)});
-    window.testOutcome = window.testRun.messages.then(() => 'resolved', (error) => error.message);
-    undefined;
+    (() => {
+      window.testEvents = [];
+      let markStarted;
+      window.testStarted = new Promise((resolve) => { markStarted = resolve; });
+      window.testRun = window.openzlDesktop.startBenchmark(${JSON.stringify(request)}, (event) => {
+        window.testEvents.push(event);
+        if (event.type === 'started') markStarted();
+      });
+      window.testOutcome = window.testRun.done.then(() => 'resolved', (error) => error.message);
+      return (${waitForStarted.toString()})(window.testStarted, window.testRun.done, ${START_TIMEOUT_MS});
+    })()
   `);
   assert.ok(await waitUntil(() => zliTrainPids().length > 0, 30_000), 'zli train never started');
   const pids = zliTrainPids();
@@ -95,6 +127,16 @@ async function harness(scenario, sample) {
 
   const endedAt = Date.now();
   if (scenario === 'cancel') {
+    // Still training: no candidate has been measured, so only the run's start
+    // and training's steps have been reported.
+    result.eventsBeforeCancel = await window.webContents.executeJavaScript(
+      'window.testEvents.map((event) => event.type)',
+    );
+    assert.deepEqual(result.eventsBeforeCancel.slice(0, 2), ['loading', 'started']);
+    assert.ok(
+      result.eventsBeforeCancel.slice(2).every((type) => type === 'step'),
+      `reported ${result.eventsBeforeCancel} before any candidate`,
+    );
     result.outcome = await window.webContents.executeJavaScript('window.testRun.cancel(); window.testOutcome');
     assert.equal(result.outcome, 'Benchmark cancelled');
   } else if (scenario === 'reload') {
@@ -163,15 +205,19 @@ async function main() {
   process.stdout.write(`${JSON.stringify({ok: true, report}, null, 2)}\n`);
 }
 
-if (process.versions.electron !== undefined) {
-  const argument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
-  harness(argument('scenario'), argument('sample')).catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-    require('electron').app.exit(1);
-  });
-} else {
-  main().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-    process.exitCode = 1;
-  });
+if (require.main === module) {
+  if (process.versions.electron !== undefined) {
+    const argument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
+    harness(argument('scenario'), argument('sample')).catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+      require('electron').app.exit(1);
+    });
+  } else {
+    main().catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+      process.exitCode = 1;
+    });
+  }
 }
+
+module.exports = {waitForStarted};
