@@ -2,11 +2,11 @@
 
 // @vitest-environment node
 
-import {join, relative} from 'node:path';
+import {join, relative, resolve} from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {APP_ORIGIN, originOf, resolveBundlePath} from '../electron/app-protocol.cjs';
 
-const ROOT = '/opt/playground/dist';
+const ROOT = resolve('/opt/playground/dist');
 
 describe('resolveBundlePath', () => {
   it('uses app://bundle as the renderer origin', () => {
