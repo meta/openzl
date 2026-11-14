@@ -27,7 +27,7 @@ describe('useCompressorRows', () => {
   });
 
   it('seeds the counter above whatever it was handed', () => {
-    const {result} = renderHook(() => useCompressorRows([createCompressorRow(7, 'zstd')]));
+    const {result} = renderHook(() => useCompressorRows({initialRows: [createCompressorRow(7, 'zstd')]}));
 
     act(() => {
       result.current.addRow();
@@ -74,7 +74,7 @@ describe('useCompressorRows', () => {
   it('rebuilds a row from defaults when its compressor changes', () => {
     // Patching would carry fields across that the new compressor has no use
     // for, so the row is rebuilt rather than merged.
-    const {result} = renderHook(() => useCompressorRows([createCompressorRow(1, 'OpenZL')]));
+    const {result} = renderHook(() => useCompressorRows({initialRows: [createCompressorRow(1, 'OpenZL')]}));
 
     const fresh = createCompressorRow(1, 'OpenZL') as OpenZlRow;
     act(() => {
@@ -106,5 +106,22 @@ describe('useCompressorRows', () => {
     expect(result.current.rows.filter((row) => row.compressor === compressor)).toEqual([
       createCompressorRow(1, compressor),
     ]);
+  });
+
+  it("gives every OpenZL row the build's default candidate count, including ones added or switched to later", () => {
+    const {result} = renderHook(() => useCompressorRows({defaultCandidates: 10}));
+    const candidates = () =>
+      result.current.rows.flatMap((row) => (row.compressor === 'OpenZL' ? [row.candidates] : []));
+
+    expect(candidates()).toEqual([10]);
+
+    act(() => {
+      result.current.addRow();
+    });
+    act(() => {
+      result.current.changeCompressor(2, 'OpenZL');
+    });
+
+    expect(candidates()).toEqual([10, 10, 10]);
   });
 });

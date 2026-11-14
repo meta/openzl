@@ -14,6 +14,8 @@ const HOW_IT_WORKS_STEPS = ['Choose your data.', 'Pick compressors to compare.',
 
 interface ResultsPanelProps {
   runState: RunState;
+  /** Whether to say that the measurements come from WASM; false where they come from native `zli`. */
+  showWasmNotice?: boolean;
 }
 
 function Pill({children, bg, color}: {children: string; bg: string; color: string}) {
@@ -63,7 +65,7 @@ function FailureList({runState}: ResultsPanelProps) {
   );
 }
 
-export default function ResultsPanel({runState}: ResultsPanelProps) {
+export default function ResultsPanel({runState, showWasmNotice = true}: ResultsPanelProps) {
   const results = resultsOf(runState);
   const hasResults = results.length > 0;
   const isRunning = isRunInProgress(runState);
@@ -132,7 +134,8 @@ export default function ResultsPanel({runState}: ResultsPanelProps) {
         />
         <FailureList runState={runState} />
 
-        {hasResults && (
+        {/* Only true of the browser build: the desktop app measures with native zli. */}
+        {hasResults && showWasmNotice && (
           <Box
             as="aside"
             aria-label="WebAssembly speed notice"

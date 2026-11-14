@@ -2,7 +2,7 @@
 
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import {describe, it, expect, afterEach} from 'vitest';
+import {describe, it, expect, afterEach, beforeEach} from 'vitest';
 import {fireEvent, render, screen, cleanup, within, waitFor, type RenderOptions} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {ChakraProvider} from '@chakra-ui/react';
@@ -19,7 +19,14 @@ import {
   type CompressorRow,
   type OpenZlProfile,
 } from '../src/compressors.ts';
-import {isBrowserSupportedProfile, profileDescription} from '../src/wasmProfiles.ts';
+import type {BackendSettings} from '../src/backend.ts';
+import {
+  DESKTOP_DEFAULT_TRAINED_CANDIDATES,
+  DESKTOP_TRAINED_CANDIDATE_COUNTS,
+  desktopProfileMetadata,
+} from '../src/desktop.ts';
+import {isBrowserSupportedProfile, profileDescription, setWasmProfiles} from '../src/wasmProfiles.ts';
+import {TEST_PROFILES} from './setup.ts';
 import {useCompressorRows} from '../src/useCompressorRows.ts';
 import {playgroundSystem} from '../src/theme.ts';
 
@@ -30,21 +37,46 @@ function renderWithPlaygroundTheme(ui: React.ReactElement, options?: Omit<Render
   });
 }
 
-function ControlledConfigureRunCard({initialRows}: {initialRows?: readonly CompressorRow[]}) {
+function ControlledConfigureRunCard({
+  initialRows,
+  settings = {},
+}: {
+  initialRows?: readonly CompressorRow[];
+  settings?: BackendSettings;
+}) {
   // The same hook App drives the card with, so these tests exercise the real
   // row and id handling rather than a stand-in.
-  const compressors = useCompressorRows(initialRows);
+  const compressors = useCompressorRows({initialRows, defaultCandidates: settings.defaultCandidates});
   const [iterations, setIterations] = useState(ITERATIONS_DEFAULT);
   return (
     <>
-      <ConfigureRunCard compressors={compressors} iterations={iterations} onIterationsChange={setIterations} />
+      <ConfigureRunCard
+        compressors={compressors}
+        iterations={iterations}
+        onIterationsChange={setIterations}
+        candidateCounts={settings.candidateCounts}
+        unavailableHeading={settings.unavailableHeading}
+      />
       <output data-testid="compressor-ids">{compressors.rows.map((row) => row.id).join(',')}</output>
     </>
   );
 }
 
+/** What the desktop backend hands the page, as far as this card goes. */
+const DESKTOP_SETTINGS: BackendSettings = {
+  candidateCounts: DESKTOP_TRAINED_CANDIDATE_COUNTS,
+  defaultCandidates: DESKTOP_DEFAULT_TRAINED_CANDIDATES,
+  unavailableHeading: 'Not available in the desktop app',
+};
+
 function renderConfigureRunCard(initialRows?: readonly CompressorRow[]) {
   return renderWithPlaygroundTheme(<ControlledConfigureRunCard initialRows={initialRows} />);
+}
+
+function renderDesktopConfigureRunCard(initialRows?: readonly CompressorRow[]) {
+  return renderWithPlaygroundTheme(
+    <ControlledConfigureRunCard initialRows={initialRows} settings={DESKTOP_SETTINGS} />,
+  );
 }
 
 /**
@@ -453,14 +485,88 @@ describe('ConfigureRunCard', () => {
   it('offers only the candidate counts the trainer honours', () => {
     renderConfigureRunCard();
 
-    // Asserted as bounds rather than against the constant: the binding raises
-    // anything under 6 and throws over 25, so an option outside that window is
-    // a run the user cannot actually get.
+    // Asserted as bounds rather than against the constant: the WASM trainer
+    // raises anything under 6 and throws over 25, so an option outside that
+    // window is a run the user cannot actually get.
     const candidates = screen.getByRole('combobox', {name: 'Number of trained candidates for row 1'});
     const counts = optionValues(candidates).map(Number);
     expect(counts.at(0)).toBe(6);
     expect(counts.at(-1)).toBe(25);
     expect(candidates).toHaveValue('6');
+  });
+
+  describe('in the desktop app', () => {
+    // As the app's main process reports them, from `zli list-profiles` and `electron/profiles.cjs`.
+    const unavailable = {runnable: false, trainable: false, unavailableReason: 'Cannot run in the desktop app yet.'};
+    const LISTED = [
+      {name: 'csv', description: 'CSV', runnable: true, trainable: true},
+      {name: 'numeric-ml-selector-64', description: '64 bit numeric data using ml selectors', ...unavailable},
+      {
+        name: 'parquet',
+        description: 'Parquet in the canonical format (no compression, plain encoding)',
+        runnable: true,
+        trainable: true,
+      },
+      {name: 'sddl', description: 'SDDL data', ...unavailable},
+      {name: 'sddl2', description: 'SDDL v2 data', ...unavailable},
+      {name: 'serial', description: 'Serial data (aka raw bytes)', runnable: true, trainable: true},
+    ];
+    beforeEach(() => {
+      setWasmProfiles(desktopProfileMetadata(LISTED));
+    });
+    afterEach(() => {
+      setWasmProfiles(TEST_PROFILES);
+    });
+
+    it('greys out only the profiles it cannot run, under their own heading', async () => {
+      renderDesktopConfigureRunCard();
+
+      fireEvent.click(screen.getByRole('combobox', {name: 'Profile for row 1'}));
+      const listbox = await screen.findByRole('listbox');
+
+      expect(within(listbox).getByText('Not available in the desktop app')).toBeInTheDocument();
+      expect(within(listbox).queryByText('Not available in the browser')).not.toBeInTheDocument();
+      for (const {name: profile} of LISTED) {
+        const disabled = ['sddl', 'sddl2', 'numeric-ml-selector-64'].includes(profile);
+        const option = within(listbox).getByRole('option', {name: profile});
+        if (disabled) {
+          expect(option).toHaveAttribute('aria-disabled', 'true');
+        } else {
+          expect(option).not.toHaveAttribute('aria-disabled', 'true');
+        }
+      }
+
+      fireEvent.click(within(listbox).getByRole('option', {name: 'parquet'}));
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', {name: 'Profile for row 1'})).toHaveTextContent('parquet');
+      });
+    });
+
+    it('describes a profile without saying it cannot run', async () => {
+      renderDesktopConfigureRunCard();
+
+      fireEvent.click(screen.getByRole('combobox', {name: 'Profile for row 1'}));
+      const listbox = await screen.findByRole('listbox');
+      fireEvent.focus(within(listbox).getByRole('option', {name: 'parquet'}));
+
+      expect(document.getElementById(`row-1-profile-parquet-description`)).toHaveTextContent(
+        'Parquet in the canonical format (no compression, plain encoding)',
+      );
+      expect(document.getElementById(`row-1-profile-parquet-description`)).not.toHaveTextContent(
+        'Cannot run in the browser',
+      );
+    });
+
+    it('offers the candidate counts `zli train` accepts, from 10', () => {
+      renderDesktopConfigureRunCard();
+
+      const candidates = screen.getByRole('combobox', {name: 'Number of trained candidates for row 1'});
+      const counts = optionValues(candidates).map(Number);
+      expect(counts.at(0)).toBe(10);
+      expect(counts.at(-1)).toBe(25);
+      expect(candidates).toHaveValue('10');
+    });
   });
 
   it('swaps the second dropdown when the compressor changes', async () => {
