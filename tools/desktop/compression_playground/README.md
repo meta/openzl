@@ -18,14 +18,18 @@ On Windows, some dependencies' build paths exceed the path length limit, so chec
 ## Testing and packaging
 
 ```bash
-yarn typecheck && yarn lint && yarn test:run
-yarn test:native     # trains and benchmarks with the built zli and zstd-benchmark
-yarn test:security   # needs a display (Xvfb on Linux)
-yarn test:packaged   # packs the app first; needs a display
-yarn test:cancel     # needs a display and ps (Linux or macOS)
+yarn test            # everything below, as CI runs it
+yarn test:unit       # the desktop app's unit tests
+yarn test:web        # the web playground's typecheck, lint and unit tests
+yarn test:smoke      # builds what they need, then runs every smoke test
+yarn test:smoke cancellation   # or just some: native-training, window-security, cancellation, packaged-app
 yarn build           # the platform installer, under release/
 yarn package         # the unpacked app, under release/
 ```
+
+The smoke tests train and benchmark with the built `zli` and `zstd-benchmark`, check the window's security settings, check that cancelling, reloading, or quitting leaves no `zli` running, and launch the packaged app. On Linux with no display, the ones that open a window run under `xvfb-run` (`sudo apt install xvfb`). On distributions that stop unprivileged processes making user namespaces, as Ubuntu 24.04 does, Chromium's sandbox needs its `chrome-sandbox` helper to be setuid root: `yarn setup` makes Electron's so, with sudo, and the smoke tests make the packaged app's so. On Windows, the unit tests that run stand-in `#!node` binaries are skipped, since Windows cannot execute them; the smoke tests drive the real binaries through the same code.
+
+`.github/workflows/desktop-playground-ci.yml` runs `yarn install`, `yarn setup` and `yarn test` on Linux, macOS and Windows whenever the playground, `cli/` or `tools/training/` changes.
 
 ## How it works
 
