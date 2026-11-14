@@ -21,6 +21,19 @@ const desktopRunner: Plugin = {
     const resolved = await this.resolve(source, importer, {...options, skipSelf: true});
     return resolved?.id === BROWSER_RUNNER ? DESKTOP_RUNNER : resolved;
   },
+  // The cross-origin isolation worker only gives the WASM module its threads,
+  // and a service worker cannot register on the app:// origin anyway.
+  transformIndexHtml: {
+    // Before Vite rewrites the script's path for `--base`.
+    order: 'pre',
+    handler(html) {
+      const script = '<script src="/cross-origin-isolation-sw.js"></script>';
+      if (!html.includes(script)) {
+        throw new Error(`index.html no longer loads the isolation worker with ${script}`);
+      }
+      return html.replace(script, '');
+    },
+  },
 };
 
 type CspSources = [directive: string, source: string][];
