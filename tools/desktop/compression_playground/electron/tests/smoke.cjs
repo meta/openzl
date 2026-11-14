@@ -9,6 +9,7 @@
 // just that one. On Linux with no display, the ones that open a window run
 // under xvfb-run.
 
+const fs = require('node:fs');
 const path = require('node:path');
 const {ensureChromiumSandbox, getPlatform, run, yarn} = require('../../setup.cjs');
 
@@ -29,7 +30,16 @@ const SMOKE_TESTS = {
 
 const BUILDS = {
   native: () => yarn(['build:native']),
-  renderer: () => yarn(['build:renderer']),
+  renderer: () => {
+    yarn(['build:renderer']);
+    // The desktop build leaves the browser's WASM worker out; the window
+    // security and UI tests then check the page works without it.
+    const bundled = fs.readdirSync(path.join(ROOT, 'dist'), {recursive: true, encoding: 'utf8'});
+    const wasm = bundled.filter((file) => file.endsWith('.wasm') || path.basename(file) === 'openzl.js');
+    if (wasm.length > 0) {
+      throw new Error(`The desktop renderer bundles the WASM module: ${wasm.join(', ')}`);
+    }
+  },
   package: () => {
     // Unsigned: a test build has no signing identity to use, and an ad hoc
     // signature is enough for macOS to launch it.
