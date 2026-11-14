@@ -37,6 +37,7 @@ describe('UploadCard', () => {
     // Scoped to the drop zone: the live region repeats the name and size.
     const dropzone = within(screen.getByTestId('upload-dropzone'));
     expect(dropzone.getByText('sample.bin')).toBeInTheDocument();
+    // Decimal units.
     expect(dropzone.getByText(/5 MB/)).toBeInTheDocument();
     expect(dropzone.getByText('Choose another file')).toBeInTheDocument();
   });
