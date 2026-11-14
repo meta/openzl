@@ -1,7 +1,13 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import {describe, expect, it} from 'vitest';
-import {evenlySpacedLevels, levelsFor} from '../src/compressors.ts';
+import {
+  DEFAULT_TRAINED_CANDIDATES,
+  TRAINED_CANDIDATE_COUNTS,
+  createCompressorRow,
+  evenlySpacedLevels,
+  levelsFor,
+} from '../src/compressors.ts';
 
 describe('evenlySpacedLevels', () => {
   it('spreads the asked-for count across the range', () => {
@@ -38,5 +44,18 @@ describe('evenlySpacedLevels', () => {
     // whole range rather than repeating a level.
     expect(evenlySpacedLevels('gzip', 25)).toEqual(levelsFor('gzip'));
     expect(evenlySpacedLevels('zstd', 25)).toEqual(levelsFor('zstd'));
+  });
+});
+
+describe('createCompressorRow', () => {
+  it('starts an OpenZL row on the candidate count its build takes', () => {
+    expect(createCompressorRow(1, 'OpenZL')).toMatchObject({candidates: 6});
+    expect(createCompressorRow(1, 'OpenZL', 10)).toMatchObject({candidates: 10});
+  });
+
+  it('offers the browser its candidate window, with the default among them', () => {
+    expect(TRAINED_CANDIDATE_COUNTS).toContain(DEFAULT_TRAINED_CANDIDATES);
+    expect(Math.min(...TRAINED_CANDIDATE_COUNTS)).toBe(6);
+    expect(Math.max(...TRAINED_CANDIDATE_COUNTS)).toBe(25);
   });
 });

@@ -32,6 +32,7 @@ export interface TrainingConfig {
    * `wasm_api.d.ts` is explicit that this bounds the results, not the work.
    * The binding raises anything under `OPENZL_WASM_TRAIN_PARETO_CANDIDATES`
    * (6) and throws over 25, the window `TRAINED_CANDIDATE_COUNTS` offers.
+   * The desktop app's `zli train` takes 10 to 25 (`DESKTOP_TRAINED_CANDIDATE_COUNTS`).
    */
   readonly candidates: number;
   /**
@@ -171,6 +172,9 @@ export type WorkerMessage =
   | {readonly type: 'profiles'; readonly profiles: readonly ProfileMetadata[]}
   | {readonly type: 'profilesFailed'; readonly message: string};
 
+/** The messages that belong to a run, as opposed to the profile lookup. */
+export type RunMessage = Exclude<WorkerMessage, {type: 'profiles' | 'profilesFailed'}>;
+
 /** What the page sends in. The `File` rides along, since it clones. */
 export type WorkerRequest = {readonly config: RunConfig; type: 'benchmarkRequest'} | {readonly type: 'profilesRequest'};
 
@@ -242,7 +246,7 @@ export function buildJobs(config: RunConfig): RunPlan {
       case 'OpenZL': {
         const profile = compressor.profile;
         // With no profiles loaded the jobs still go out, so each reports why
-        // the module failed rather than being rejected here.
+        // the profiles failed to load rather than being rejected here.
         if (getOpenZlProfiles().length > 0 && !isBrowserSupportedProfile(profile)) {
           // The picker refuses these profiles, so this is a backstop for a
           // config assembled anywhere else.
