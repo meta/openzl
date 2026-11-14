@@ -70,6 +70,14 @@
         ]
       },
       {
+        "from": "../../web/compression_playground/src/bundledSample.json",
+        "to": "shared/bundledSample.json"
+      },
+      {
+        "from": "../../../examples/getting_started/sample_inputs/sra0.bin",
+        "to": "sra0.bin"
+      },
+      {
         "from": "electron/native-worker.cjs",
         "to": "native/native-worker.cjs"
       },
