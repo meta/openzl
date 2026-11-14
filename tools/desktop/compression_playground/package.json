@@ -12,7 +12,7 @@
   "scripts": {
     "setup": "node setup.cjs",
     "dev": "yarn setup && electron electron/main.cjs --dev-server=auto",
-    "build:renderer": "yarn --cwd ../../web/compression_playground tsc -b && yarn --cwd ../../web/compression_playground vite build --base ./ --outDir ../../desktop/compression_playground/dist --emptyOutDir",
+    "build:renderer": "yarn --cwd ../../web/compression_playground tsc -b && yarn --cwd ../../web/compression_playground vite build --base ./ --mode desktop --outDir ../../desktop/compression_playground/dist --emptyOutDir",
     "build:native": "node setup.cjs native",
     "build": "yarn setup && yarn build:renderer && electron-builder",
     "package": "yarn setup && yarn build:renderer && electron-builder --dir",

@@ -53,61 +53,9 @@ on:
 permissions:
   contents: read
 
-# Bumping Emscripten means editing this and the matching lines in
-# test-deploy-docs.yml, deploy-docs.yml and wasm-ci.yml.
-env:
-  EMSDK_VERSION: 4.0.19
-
 jobs:
-  # Synced with the "wasm" job in test-deploy-docs.yml, cache key included, so
-  # a build either workflow made is restored here. The desktop app never loads
-  # the module, but the renderer cannot be bundled without it.
-  wasm:
-    name: Build WASM artifact
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Cache WASM artifact
-        id: wasm-cache
-        uses: actions/cache@v4
-        with:
-          path: build-wasm/tools/wasm
-          key: >-
-            openzl-wasm-${{runner.os}}-emsdk${{env.EMSDK_VERSION}}-${{hashFiles(
-            'tools/wasm/**', 'tools/training/**', 'tools/io/**',
-            'tools/logger/**', 'cli/utils/profile_graphs.*',
-            'custom_parsers/**', 'cpp/**', 'src/**', 'include/**',
-            '**/CMakeLists.txt', 'build-scripts/cmake/**',
-            '.github/workflows/deploy-docs.yml',
-            '.github/workflows/test-deploy-docs.yml')}}
-      - name: Set up Emscripten
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: ${{env.EMSDK_VERSION}}
-          actions-cache-folder: emsdk-cache
-      - name: Configure
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
-        run: emcmake cmake -DOPENZL_BUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release -B build-wasm
-      - name: Build
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
-        run: cmake --build build-wasm --target openzl_wasm -j$(getconf _NPROCESSORS_ONLN)
-      - name: Strip debug info
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
-        run: emstrip --strip-debug build-wasm/tools/wasm/openzl.wasm
-      - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: openzl-wasm
-          path: |
-            build-wasm/tools/wasm/openzl.js
-            build-wasm/tools/wasm/openzl.wasm
-          if-no-files-found: error
-          retention-days: 1
-
   desktop:
     name: Desktop app (${{ matrix.os }})
-    needs: wasm
     runs-on: ${{ matrix.os }}
     # Training the bundled sample dominates: about 7 minutes on a devserver
     # with 4 training threads, longer on a hosted runner.
@@ -134,11 +82,8 @@ jobs:
           cache-dependency-path: |
             tools/web/yarn.lock
             tools/desktop/compression_playground/yarn.lock
-      - name: Download WASM artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: openzl-wasm
-          path: tools/wasm/js
+      # Nothing here builds or downloads the WASM module, so a desktop renderer
+      # that still needed it would fail to build.
       - run: yarn install --frozen-lockfile
       - run: yarn setup
       - run: yarn test

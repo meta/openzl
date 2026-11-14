@@ -24,7 +24,8 @@ async function startDevServer({port} = {}) {
   const vitePath = require.resolve('vite', {paths: [WEB_PLAYGROUND]});
   /** @type {typeof import('vite')} */
   const vite = await import(pathToFileURL(vitePath).href);
-  const server = await vite.createServer({root: WEB_PLAYGROUND, base: './', server: {port}});
+  // The desktop mode benchmarks with zli rather than the WASM module.
+  const server = await vite.createServer({root: WEB_PLAYGROUND, base: './', mode: 'desktop', server: {port}});
   await server.listen();
   const url = server.resolvedUrls?.local[0];
   if (url === undefined) {
