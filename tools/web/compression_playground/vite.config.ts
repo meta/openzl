@@ -3,7 +3,38 @@
 import {createWebToolConfig} from '../vite.base.ts';
 import {existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import type {Plugin} from 'vite';
+import {normalizePath, type ConfigEnv, type Plugin} from 'vite';
+
+const BROWSER_RUNNER = normalizePath(fileURLToPath(new URL('./src/runBenchmark.ts', import.meta.url)));
+const DESKTOP_RUNNER = normalizePath(fileURLToPath(new URL('./src/runBenchmark.desktop.ts', import.meta.url)));
+
+// `--mode desktop` builds the renderer for Electron, which benchmarks with zli.
+// Swapping out the browser runner drops the WASM worker from the bundle, along
+// with the Emscripten output it imports, which a desktop build does not have.
+const desktopRunner: Plugin = {
+  name: 'desktop-runner',
+  enforce: 'pre',
+  async resolveId(source, importer, options) {
+    if (!source.includes('runBenchmark')) {
+      return null;
+    }
+    const resolved = await this.resolve(source, importer, {...options, skipSelf: true});
+    return resolved?.id === BROWSER_RUNNER ? DESKTOP_RUNNER : resolved;
+  },
+  // The cross-origin isolation worker only gives the WASM module its threads,
+  // and a service worker cannot register on the app:// origin anyway.
+  transformIndexHtml: {
+    // Before Vite rewrites the script's path for `--base`.
+    order: 'pre',
+    handler(html) {
+      const script = '<script src="/cross-origin-isolation-sw.js"></script>';
+      if (!html.includes(script)) {
+        throw new Error(`index.html no longer loads the isolation worker with ${script}`);
+      }
+      return html.replace(script, '');
+    },
+  },
+};
 
 type CspSources = [directive: string, source: string][];
 
@@ -101,20 +132,18 @@ function googleAnalytics(): Plugin {
 // it -- and `wasm_api.js` says what is missing when that request fails.
 const hasWasmArtifact = existsSync(fileURLToPath(new URL('../../wasm/js/openzl.js', import.meta.url)));
 
-const config = createWebToolConfig({
-  base: '/tools/playground',
-  plugins: [devContentSecurityPolicy, googleAnalytics()],
-  testAlias: [
-    {
-      find: /^\/OpenZL_logo\.png/,
-      replacement: fileURLToPath(new URL('./public/OpenZL_logo.png', import.meta.url)),
-    },
-  ],
-  testSetupFiles: ['./tests/setup.ts'],
-});
-
-export default {
-  ...config,
+export default ({mode}: ConfigEnv) => ({
+  ...createWebToolConfig({
+    base: '/tools/playground',
+    plugins: [devContentSecurityPolicy, googleAnalytics(), ...(mode === 'desktop' ? [desktopRunner] : [])],
+    testAlias: [
+      {
+        find: /^\/OpenZL_logo\.png/,
+        replacement: fileURLToPath(new URL('./public/OpenZL_logo.png', import.meta.url)),
+      },
+    ],
+    testSetupFiles: ['./tests/setup.ts'],
+  }),
   // The benchmark worker is spawned with `{type: 'module'}`, so the build has
   // to emit it as one. The default IIFE output does not match and its imports
   // fail once built, though the dev server serves it either way.
@@ -149,4 +178,4 @@ export default {
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
-};
+});

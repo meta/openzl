@@ -171,6 +171,9 @@ export type WorkerMessage =
   | {readonly type: 'profiles'; readonly profiles: readonly ProfileMetadata[]}
   | {readonly type: 'profilesFailed'; readonly message: string};
 
+/** The messages that belong to a run, as opposed to the profile lookup. */
+export type RunMessage = Exclude<WorkerMessage, {type: 'profiles' | 'profilesFailed'}>;
+
 /** What the page sends in. The `File` rides along, since it clones. */
 export type WorkerRequest = {readonly config: RunConfig; type: 'benchmarkRequest'} | {readonly type: 'profilesRequest'};
 
