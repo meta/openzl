@@ -1,67 +1,74 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-/**
- * @import {CompressorConfig, DesktopRunConfig, TrainingConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts'
- */
+/* eslint-disable @typescript-eslint/no-require-imports */
+
+/** @import {DesktopRunConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts' */
 
 'use strict';
 
-/**
- * @param {unknown} value
- * @returns {value is Record<string, unknown>}
- */
-function isObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+const {z} = require('zod');
+
+const ITERATIONS = 'Iterations must be a positive integer';
+const INVALID_ROW = 'Invalid compressor row';
+const TRAINING = 'OpenZL training options are invalid';
+const INVALID_PATH = 'Invalid input path';
+
+/** @param {string} compressor */
+function levelsSchema(compressor) {
+  const message = `Invalid ${compressor} levels`;
+  return z.array(z.int({error: message}), {error: message});
 }
 
-/**
- * @param {unknown} value
- * @returns {value is number}
- */
-function isPositiveInteger(value) {
-  return Number.isInteger(value) && Number(value) >= 1;
-}
+const trainingSchema = z
+  .object(
+    {
+      paretoFrontier: z.literal(true, {error: TRAINING}),
+      candidates: z.int({error: TRAINING}).min(1, TRAINING),
+    },
+    {error: TRAINING},
+  )
+  .nullable();
 
-/**
- * @param {unknown} training
- * @returns {TrainingConfig | null}
- */
-function trainingConfig(training) {
-  if (training === null) {
-    return null;
-  }
-  if (!isObject(training) || training.paretoFrontier !== true || !isPositiveInteger(training.candidates)) {
-    throw new TypeError('OpenZL training options are invalid');
-  }
-  return {paretoFrontier: true, candidates: training.candidates};
-}
+// The row's shape is checked first, so a malformed row is not reported as an
+// unknown compressor.
+const compressorSchema = z
+  .object({rowId: z.int({error: INVALID_ROW})}, {error: INVALID_ROW})
+  .loose()
+  .pipe(
+    z.discriminatedUnion(
+      'compressor',
+      [
+        z.object({
+          rowId: z.int(),
+          compressor: z.literal('OpenZL'),
+          levels: levelsSchema('OpenZL'),
+          profile: z.string({error: 'OpenZL profile is missing'}).min(1, 'OpenZL profile is missing'),
+          training: trainingSchema,
+        }),
+        z.object({rowId: z.int(), compressor: z.literal('zstd'), levels: levelsSchema('zstd')}),
+        z.object({rowId: z.int(), compressor: z.literal('gzip'), levels: levelsSchema('gzip')}),
+      ],
+      {error: 'Unknown compressor'},
+    ),
+  );
 
-/**
- * @param {unknown} row
- * @returns {CompressorConfig}
- */
-function compressorConfig(row) {
-  if (!isObject(row) || !Number.isInteger(row.rowId)) {
-    throw new TypeError('Invalid compressor row');
-  }
-  const rowId = Number(row.rowId);
-  const {compressor, levels} = row;
-  if (compressor !== 'OpenZL' && compressor !== 'zstd' && compressor !== 'gzip') {
-    throw new TypeError('Unknown compressor');
-  }
-  if (!Array.isArray(levels) || !levels.every((level) => Number.isInteger(level))) {
-    throw new TypeError(`Invalid ${compressor} levels`);
-  }
-  /** @type {number[]} */
-  const copied = [...levels];
-  if (compressor !== 'OpenZL') {
-    return {rowId, compressor, levels: copied};
-  }
-  if (typeof row.profile !== 'string' || row.profile === '') {
-    throw new TypeError('OpenZL profile is missing');
-  }
-  return {rowId, compressor, levels: copied, profile: row.profile, training: trainingConfig(row.training)};
-}
+/** Keys are in the order they are reported: the first invalid one names the error. */
+const requestSchema = z.object(
+  {
+    iterations: z.int({error: ITERATIONS}).min(1, ITERATIONS),
+    compressors: z.array(compressorSchema, {error: 'Invalid compressor list'}),
+    input: z.object(
+      {
+        path: z
+          .string({error: INVALID_PATH})
+          .min(1, INVALID_PATH)
+          .refine((path) => !path.includes('\0'), INVALID_PATH),
+      },
+      {error: 'Benchmark input is missing'},
+    ),
+  },
+  {error: 'Invalid benchmark request'},
+);
 
 /**
  * Returns a copy of `request` holding only the fields `DesktopRunConfig` has,
@@ -74,24 +81,11 @@ function compressorConfig(row) {
  * @returns {DesktopRunConfig}
  */
 function validateRequest(request) {
-  if (!isObject(request)) {
-    throw new TypeError('Invalid benchmark request');
+  const parsed = requestSchema.safeParse(request);
+  if (parsed.success) {
+    return parsed.data;
   }
-  if (!isPositiveInteger(request.iterations)) {
-    throw new TypeError('Iterations must be a positive integer');
-  }
-  if (!Array.isArray(request.compressors)) {
-    throw new TypeError('Invalid compressor list');
-  }
-  const compressors = request.compressors.map(compressorConfig);
-  const {input} = request;
-  if (!isObject(input)) {
-    throw new TypeError('Benchmark input is missing');
-  }
-  if (typeof input.path !== 'string' || input.path === '' || input.path.includes('\0')) {
-    throw new TypeError('Invalid input path');
-  }
-  return {input: {path: input.path}, compressors, iterations: request.iterations};
+  throw new TypeError(parsed.error.issues[0]?.message);
 }
 
 module.exports = {validateRequest};
