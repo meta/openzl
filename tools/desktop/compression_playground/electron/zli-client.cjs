@@ -10,11 +10,20 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
+const {z} = require('zod');
 
 const TRAINING_THREADS = Math.min(4, Math.max(1, os.availableParallelism()));
-// The leading columns of zli benchmark --output-csv. The path column after them
-// is not read, so a quoted path cannot shift the numbers.
-const CSV_COLUMNS = ['srcSize', 'compressedSize', 'compressionRatio', 'ctimeMs', 'dtimeMs', 'iters'];
+const csvCount = z.string().trim().regex(/^\d+$/, 'expected a whole number').transform(Number);
+const csvNumber = z.string().trim().min(1, 'expected a number').transform(Number).pipe(z.number().finite().min(0));
+// The columns of a zli benchmark --output-csv row this client reads. The path
+// column comes last and is not read, so a quoted path cannot shift the numbers.
+const benchmarkRowSchema = z.object({
+  srcSize: csvCount,
+  compressedSize: csvCount,
+  ctimeMs: csvNumber,
+  dtimeMs: csvNumber,
+  iters: csvCount.pipe(z.int().min(1)),
+});
 const KILL_GRACE_MS = 2000;
 
 /**
@@ -219,22 +228,27 @@ function runZli(zliPath, args, {signal, onChild, onProgress}) {
 
 /**
  * Reads the single row zli benchmark --output-csv writes for one input file.
+ * A value that is not the number it should be fails naming its column.
  *
  * @param {string} csvPath
  * @returns {Promise<ZliMeasurement>}
  */
 async function readBenchmarkCsv(csvPath) {
   const [header = '', row = ''] = (await fs.readFile(csvPath, 'utf8')).split(/\r?\n/);
-  const names = header.split(',').slice(0, CSV_COLUMNS.length);
-  const values = row.split(',').slice(0, CSV_COLUMNS.length);
-  if (
-    names.join() !== CSV_COLUMNS.join() ||
-    values.length !== CSV_COLUMNS.length ||
-    values.some((value) => value.trim() === '' || !(Number(value) >= 0))
-  ) {
-    throw new Error('zli returned an unexpected result');
+  const values = row.split(',');
+  const names = header.split(',').map((name) => name.trim());
+  // Read by name, so a repeated column would silently replace the first.
+  const repeated = names.find((name, index) => names.indexOf(name) !== index);
+  if (repeated !== undefined) {
+    throw new Error(`zli returned an unexpected result (column ${repeated} appears twice)`);
   }
-  const field = Object.fromEntries(CSV_COLUMNS.map((name, index) => [name, Number(values[index])]));
+  const parsed = benchmarkRowSchema.safeParse(Object.fromEntries(names.map((name, index) => [name, values[index]])));
+  if (!parsed.success) {
+    const [issue] = parsed.error.issues;
+    const field = issue !== undefined && issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
+    throw new Error(`zli returned an unexpected result (${field}${issue?.message})`);
+  }
+  const field = parsed.data;
   return {
     iterations: field.iters,
     srcSize: field.srcSize,
