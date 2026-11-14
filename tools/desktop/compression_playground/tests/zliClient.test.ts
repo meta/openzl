@@ -2,101 +2,24 @@
 
 // @vitest-environment node
 
-import {chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, readdirSync, readFileSync, rmSync} from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import type {OpenZlBenchmarkJob, TrainingConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts';
 import {measureOpenZL, type ZliChildEvent} from '../electron/zli-client.cjs';
+import {fakeZli, HANGING_ZLI, inputFile, openZLJob, removeFakeZlis, UNORDERED_CANDIDATES_ZLI} from './fakeZli.ts';
 
-/**
- * Stands in for zli. Training writes candidates 0, 1, 2 and 10 beside a
- * benchmark.csv, as zli train --pareto-frontier does, and each candidate's
- * contents become its compressedSize. A benchmark writes zli's CSV header and
- * one row whose quoted path contains a comma, and fails if its --compressor
- * path does not exist or is the one FAKE_ZLI_FAIL names. Each call's input path
- * is appended to FAKE_ZLI_INPUTS when it is set.
- */
-const FAKE_ZLI = `
-const fs = require('node:fs');
-const path = require('node:path');
-const args = process.argv.slice(2);
-// A test sets this to stand in for a zli that writes CRLF, as on Windows.
-const eol = process.env.FAKE_ZLI_EOL ?? '\\n';
-// Without the trailing path column, a stray CR would land on the last name read.
-const pathColumn = process.env.FAKE_ZLI_PATH_COLUMN !== '0';
-const flag = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
-if (process.env.FAKE_ZLI_INPUTS !== undefined) {
-  fs.appendFileSync(process.env.FAKE_ZLI_INPUTS, args[1] + '\\n');
-}
-if (args[0] === 'train') {
-  const output = flag('--output');
-  fs.mkdirSync(output, {recursive: true});
-  for (const index of [10, 2, 0, 1]) {
-    fs.writeFileSync(output + '/' + index + '.zc', String(index + 1));
-  }
-  fs.writeFileSync(output + '/benchmark.csv', '');
-} else {
-  const compressor = flag('--compressor');
-  if (compressor !== undefined && (!fs.existsSync(compressor) || path.basename(compressor) === process.env.FAKE_ZLI_FAIL)) {
-    process.stderr.write('Cannot load compressor: ' + path.basename(compressor) + '\\n');
-    process.exit(1);
-  }
-  const compressedSize = compressor === undefined ? 2 : fs.readFileSync(compressor, 'utf8');
-  fs.writeFileSync(
-    flag('--output-csv'),
-    'srcSize,compressedSize,compressionRatio,ctimeMs,dtimeMs,iters' + (pathColumn ? ',path' : '') + eol +
-      '3,' + compressedSize + ',1.5,1,1,' + flag('--num-iters') + (pathColumn ? ',"/tmp/a,b"' : '') + eol,
-  );
-}
-`;
-
-/**
- * Stands in for a zli that ignores SIGTERM and never finishes. It writes a
- * `ready` file beside itself once SIGTERM is ignored, so a test can wait for
- * that before signalling it.
- */
-const HANGING_ZLI = `
-process.on('SIGTERM', () => {});
-require('node:fs').writeFileSync(require('node:path').join(__dirname, 'ready'), '');
-setInterval(() => {}, 1000);
-`;
-
-let workDirectory: string | undefined;
+const TRAINED = {paretoFrontier: true, candidates: 10} as const;
+const MEASUREMENT = {iterations: 4, srcSize: 3, compressMs: 1, decompressMs: 1};
 
 afterEach(() => {
   delete process.env.FAKE_ZLI_EOL;
   delete process.env.FAKE_ZLI_PATH_COLUMN;
   delete process.env.FAKE_ZLI_FAIL;
   delete process.env.FAKE_ZLI_INPUTS;
-  if (workDirectory !== undefined) {
-    rmSync(workDirectory, {recursive: true, force: true});
-    workDirectory = undefined;
-  }
+  removeFakeZlis();
 });
-
-function scratch(): string {
-  workDirectory ??= mkdtempSync(join(tmpdir(), 'zli-client-test-'));
-  return workDirectory;
-}
-
-function fakeZli(script = FAKE_ZLI): string {
-  const zliPath = join(scratch(), 'zli');
-  writeFileSync(zliPath, `#!${process.execPath}\n${script}`);
-  chmodSync(zliPath, 0o755);
-  return zliPath;
-}
-
-function inputFile(): string {
-  const inputPath = join(scratch(), 'input.bin');
-  writeFileSync(inputPath, new Uint8Array([1, 2, 3]));
-  return inputPath;
-}
-
-function openZLJob(training: TrainingConfig | null = null): OpenZlBenchmarkJob {
-  return {id: '1-OpenZL-6', rowId: 1, level: 6, iterations: 4, compressor: 'OpenZL', profile: 'serial', training};
-}
 
 async function collect<T>(outcomes: AsyncIterable<T>): Promise<T[]> {
   const collected = [];
@@ -106,7 +29,10 @@ async function collect<T>(outcomes: AsyncIterable<T>): Promise<T[]> {
   return collected;
 }
 
-const MEASUREMENT = {iterations: 4, srcSize: 3, compressMs: 1, decompressMs: 1};
+/** A zli whose training prints `stderr` and exits with `exit`, or is killed by a signal. */
+function failingTraining(stderr: string, exit: string): string {
+  return fakeZli(`process.stderr.write(${JSON.stringify(stderr)});\n${exit};`);
+}
 
 describe('measureOpenZL', () => {
   it('reads a CSV written with CRLF line endings and no path column', async () => {
@@ -120,11 +46,11 @@ describe('measureOpenZL', () => {
   });
 
   it('has zli read the input where it is, rather than a copy', async () => {
-    const inputs = join(scratch(), 'inputs.txt');
-    process.env.FAKE_ZLI_INPUTS = inputs;
     const inputPath = inputFile();
+    const inputs = join(dirname(inputPath), 'inputs.txt');
+    process.env.FAKE_ZLI_INPUTS = inputs;
 
-    await collect(measureOpenZL(fakeZli(), inputPath, openZLJob({paretoFrontier: true, candidates: 10})));
+    await collect(measureOpenZL(fakeZli(UNORDERED_CANDIDATES_ZLI), inputPath, openZLJob(TRAINED)));
 
     // One training run, then four candidate benchmarks, all of the same file.
     expect(readFileSync(inputs, 'utf8').trim().split('\n')).toEqual(Array(5).fill(inputPath));
@@ -146,10 +72,8 @@ describe('measureOpenZL', () => {
     }
   });
 
-  it('benchmarks every trained candidate in index order, counted from 1', async () => {
-    const outcomes = await collect(
-      measureOpenZL(fakeZli(), inputFile(), openZLJob({paretoFrontier: true, candidates: 10})),
-    );
+  it('benchmarks every trained candidate in index order, counted from 1, each as soon as it is measured', async () => {
+    const outcomes = await collect(measureOpenZL(fakeZli(UNORDERED_CANDIDATES_ZLI), inputFile(), openZLJob(TRAINED)));
 
     expect(outcomes).toEqual(
       [1, 2, 3, 11].map((compressedSize, index) => ({
@@ -162,13 +86,83 @@ describe('measureOpenZL', () => {
   it('still benchmarks the other candidates when one cannot be', async () => {
     process.env.FAKE_ZLI_FAIL = '1.zc';
 
-    const outcomes = await collect(
-      measureOpenZL(fakeZli(), inputFile(), openZLJob({paretoFrontier: true, candidates: 10})),
-    );
+    const outcomes = await collect(measureOpenZL(fakeZli(UNORDERED_CANDIDATES_ZLI), inputFile(), openZLJob(TRAINED)));
 
     expect(outcomes.map((outcome) => outcome.candidate?.index)).toEqual([1, 2, 3, 4]);
     expect(outcomes[1]).toEqual({candidate: {index: 2, total: 4}, error: new Error('Cannot load compressor: 1.zc')});
     expect(outcomes.filter((outcome) => 'measurement' in outcome)).toHaveLength(3);
+  });
+
+  it("reports training's progress as zli's progress bar shows it, and nothing else", async () => {
+    const trained: number[] = [];
+    await collect(
+      measureOpenZL(fakeZli(), inputFile(), openZLJob(TRAINED), {onProgress: (fraction) => trained.push(fraction)}),
+    );
+    expect(trained).toEqual([0, 0.5, 1]);
+
+    const untrained: number[] = [];
+    await collect(
+      measureOpenZL(fakeZli(), inputFile(), openZLJob(), {onProgress: (fraction) => untrained.push(fraction)}),
+    );
+    expect(untrained).toEqual([]);
+  });
+
+  it('reads training progress across ACE graphs as one fraction', async () => {
+    const twoGraphs = fakeZli(`
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const flag = (name) => args[args.indexOf(name) + 1];
+if (args[0] === 'train') {
+  for (const line of ['[----] Training ACE graph 1 / 2: ACE progress', '[====] Training ACE graph 1 / 2: ACE progress',
+                      '[----] Training ACE graph 2 / 2: ACE progress', '[==--] Training ACE graph 2 / 2: ACE progress']) {
+    process.stderr.write(line + '\\n');
+  }
+  fs.mkdirSync(flag('--output'), {recursive: true});
+  fs.writeFileSync(flag('--output') + '/0.zc', '1');
+} else {
+  fs.writeFileSync(flag('--output-csv'), 'srcSize,compressedSize,compressionRatio,ctimeMs,dtimeMs,iters\\n3,1,3,1,1,1\\n');
+}
+`);
+    const fractions: number[] = [];
+    await collect(
+      measureOpenZL(twoGraphs, inputFile(), openZLJob(TRAINED), {onProgress: (fraction) => fractions.push(fraction)}),
+    );
+    // Each graph's bar starts again from empty; the whole only moves forward.
+    expect(fractions).toEqual([0, 0.5, 0.5, 0.75]);
+  });
+
+  it('reports only the fatal error when training fails, not its progress', async () => {
+    const failing = failingTraining(
+      'Using all provided training samples, total size 1\n[==--] Training ACE graph 1 / 1: ACE progress\nI/O Exception:\n\tFailed to open input file\n',
+      'process.exit(1)',
+    );
+
+    await expect(
+      collect(measureOpenZL(failing, inputFile(), openZLJob(TRAINED), {onProgress: vi.fn()})),
+    ).rejects.toThrow(/^I\/O Exception:\n\tFailed to open input file$/);
+  });
+
+  it('reports the signal, not its last INFO line, when zli is killed mid-training', async () => {
+    // A crash or an out-of-memory kill leaves no error heading.
+    const killed = failingTraining(
+      'Using all provided training samples, total size 1\n[==--] Training ACE graph 1 / 1: ACE progress\n',
+      "process.kill(process.pid, 'SIGKILL')",
+    );
+
+    await expect(
+      collect(measureOpenZL(killed, inputFile(), openZLJob(TRAINED), {onProgress: vi.fn()})),
+    ).rejects.toThrow('zli exited unexpectedly (signal SIGKILL)');
+  });
+
+  it('reports a one-line error zli prints without detail', async () => {
+    const failing = failingTraining(
+      '[==--] Training ACE graph 1 / 1: ACE progress\nNo command specified\n',
+      'process.exit(1)',
+    );
+
+    await expect(
+      collect(measureOpenZL(failing, inputFile(), openZLJob(TRAINED), {onProgress: vi.fn()})),
+    ).rejects.toThrow(/^No command specified$/);
   });
 
   it('kills a zli that ignores SIGTERM when the run is aborted, and cleans up', async () => {
@@ -186,7 +180,7 @@ describe('measureOpenZL', () => {
     );
     await vi.waitFor(() => expect(events).toHaveLength(1));
     // Aborting before the stand-in ignores SIGTERM would kill it at once.
-    await vi.waitFor(() => expect(existsSync(join(scratch(), 'ready'))).toBe(true));
+    await vi.waitFor(() => expect(existsSync(join(dirname(zliPath), 'ready'))).toBe(true));
     const [{pid}] = events;
 
     const abortedAt = Date.now();
@@ -218,12 +212,9 @@ describe('measureOpenZL', () => {
     const controller = new AbortController();
     const outcomes: unknown[] = [];
     const run = (async () => {
-      for await (const outcome of measureOpenZL(
-        fakeZli(),
-        inputFile(),
-        openZLJob({paretoFrontier: true, candidates: 10}),
-        {signal: controller.signal},
-      )) {
+      for await (const outcome of measureOpenZL(fakeZli(UNORDERED_CANDIDATES_ZLI), inputFile(), openZLJob(TRAINED), {
+        signal: controller.signal,
+      })) {
         outcomes.push(outcome);
         controller.abort(new Error('Benchmark cancelled'));
       }

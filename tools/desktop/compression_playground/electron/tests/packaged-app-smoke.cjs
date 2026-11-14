@@ -186,14 +186,15 @@ async function main() {
             }
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
-          const messages = await window.openzlDesktop.startBenchmark({
+          const messages = [];
+          await window.openzlDesktop.startBenchmark({
             input: {path: ${JSON.stringify(sample)}},
             iterations: 1,
             compressors: [
               {rowId: 1, compressor: 'OpenZL', levels: [1], profile: 'serial', training: null},
               {rowId: 2, compressor: 'zstd', levels: [3]},
             ],
-          }).messages;
+          }, (message) => messages.push(message)).done;
           const results = messages.filter((message) => message.type === 'result');
           return {
             origin: location.origin,
