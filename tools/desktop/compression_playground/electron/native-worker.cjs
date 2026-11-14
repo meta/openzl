@@ -112,6 +112,12 @@ function withThroughput(measurement) {
   };
 }
 
+/**
+ * gzip compresses the whole input in memory, and Node reads at most 2 GiB less
+ * a byte into one buffer.
+ */
+const GZIP_MAX_INPUT_BYTES = 2 ** 31 - 1;
+
 /** @param {unknown} error */
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
@@ -120,14 +126,16 @@ function messageOf(error) {
 /**
  * Splits a run into one job per compressor per level, as the browser's
  * `buildJobs` does, so job ids and `totalJobs` mean the same in both builds. A
- * row with no levels is rejected rather than dropped. Which profiles can run is
+ * row with no levels is rejected rather than dropped, as is a gzip row for an
+ * input too large for gzip to read. Which profiles can run is
  * the page's to decide: it only offers those this build's `zli` can run, and
  * one that cannot is reported by `zli` itself.
  *
  * @param {ResolvedRunConfig} config
+ * @param {number} inputSize The input's size in bytes.
  * @returns {{jobs: BenchmarkJob[]; rejected: RejectedCompressor[]}}
  */
-function planJobs(config) {
+function planJobs(config, inputSize) {
   /** @type {BenchmarkJob[]} */
   const jobs = [];
   /** @type {RejectedCompressor[]} */
@@ -135,6 +143,10 @@ function planJobs(config) {
   for (const compressor of config.compressors) {
     if (compressor.levels.length === 0) {
       rejected.push({rowId: compressor.rowId, message: 'No levels selected'});
+      continue;
+    }
+    if (compressor.compressor === 'gzip' && inputSize > GZIP_MAX_INPUT_BYTES) {
+      rejected.push({rowId: compressor.rowId, message: 'gzip can only benchmark an input smaller than 2 GiB'});
       continue;
     }
     for (const level of compressor.levels) {
@@ -214,7 +226,8 @@ async function run({zliPath, zstdBenchmarkPath, config, tempRoot}, post, {signal
   // Once for the whole run, so a path zli cannot read fails the run before any
   // job starts rather than failing every job.
   const inputPath = await checkInputPath(config.input.path, {tempRoot});
-  const {jobs, rejected} = planJobs(config);
+  const {size} = await fs.stat(inputPath);
+  const {jobs, rejected} = planJobs(config, size);
   post({type: 'started', totalJobs: jobs.length, rejected});
   /** @type {Promise<Buffer> | undefined} */
   let input;

@@ -1,6 +1,6 @@
 # OpenZL Compression Playground: desktop app
 
-The playground has a browser build and an Electron desktop build. The desktop app benchmarks by running the native OpenZL CLI: it reads each `zli benchmark` result from the file `--output-csv` writes, and benchmarks the candidate files `zli train --pareto-frontier` writes. It never loads the OpenZL WASM module. zstd rows run `zstd-benchmark`, a small binary built beside `zli` against the zstd OpenZL vendors, which times zstd the way `zli benchmark` times OpenZL (one reused context, one-shot calls, the same CSV). gzip rows use Electron's built-in zlib, since OpenZL does not vendor zlib. The page itself is the web playground in `tools/web/compression_playground`.
+The playground has a browser build and an Electron desktop build. The desktop app benchmarks by running the native OpenZL CLI: it reads each `zli benchmark` result from the file `--output-csv` writes, and benchmarks the candidate files `zli train --pareto-frontier` writes. It never loads the OpenZL WASM module. zstd rows run `zstd-benchmark`, a small binary built beside `zli` against the zstd OpenZL vendors, which times zstd the way `zli benchmark` times OpenZL (one reused context, one-shot calls, the same CSV). gzip rows use Electron's built-in zlib, since OpenZL does not vendor zlib. It compresses the whole input in memory, so a gzip row is rejected for an input of 2 GiB or more. The page itself is the web playground in `tools/web/compression_playground`.
 
 ## Getting started
 
