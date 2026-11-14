@@ -1,0 +1,25 @@
+{
+  // Type-checks the Electron code and the unit tests. The Electron code is
+  // CommonJS typed with JSDoc, and imports the web playground's run and message
+  // types, so a change there that the desktop app does not follow fails here.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowJs": true,
+    "checkJs": true,
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["electron/*.cjs", "setup.cjs", "tests", "vitest.config.ts"]
+}
