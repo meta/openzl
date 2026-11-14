@@ -38,7 +38,7 @@ async function mainWindow() {
 
 function rendererBenchmark(window, request) {
   return window.webContents.executeJavaScript(
-    `window.openzlDesktop.benchmark(${JSON.stringify(request)}).then(() => 'resolved', (error) => error.message)`,
+    `window.openzlDesktop.startBenchmark(${JSON.stringify(request)}).messages.then(() => 'resolved', (error) => error.message)`,
   );
 }
 
@@ -71,7 +71,7 @@ async function main() {
     require: 'undefined',
     process: 'undefined',
     module: 'undefined',
-    bridge: ['benchmark', 'getPathForFile'],
+    bridge: ['getPathForFile', 'startBenchmark'],
     bridgeFrozen: true,
     origin: 'app://bundle',
     rendered: true,
