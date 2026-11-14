@@ -39,6 +39,9 @@ const BUILDS = {
     if (wasm.length > 0) {
       throw new Error(`The desktop renderer bundles the WASM module: ${wasm.join(', ')}`);
     }
+    if (fs.readFileSync(path.join(ROOT, 'dist', 'index.html'), 'utf8').includes('cross-origin-isolation-sw.js')) {
+      throw new Error('The desktop renderer loads the cross-origin isolation worker');
+    }
   },
   package: () => {
     // Unsigned: a test build has no signing identity to use, and an ad hoc
