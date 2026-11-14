@@ -2,13 +2,13 @@
 
 // @vitest-environment node
 
-import {chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {OpenZlBenchmarkJob, TrainingConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts';
-import {measureOpenZL} from '../electron/zli-client.cjs';
+import {measureOpenZL, type ZliChildEvent} from '../electron/zli-client.cjs';
 
 /**
  * Stands in for zli. Training writes candidates 0, 1, 2 and 10 beside a
@@ -52,6 +52,17 @@ if (args[0] === 'train') {
 }
 `;
 
+/**
+ * Stands in for a zli that ignores SIGTERM and never finishes. It writes a
+ * `ready` file beside itself once SIGTERM is ignored, so a test can wait for
+ * that before signalling it.
+ */
+const HANGING_ZLI = `
+process.on('SIGTERM', () => {});
+require('node:fs').writeFileSync(require('node:path').join(__dirname, 'ready'), '');
+setInterval(() => {}, 1000);
+`;
+
 let workDirectory: string | undefined;
 
 afterEach(() => {
@@ -70,9 +81,9 @@ function scratch(): string {
   return workDirectory;
 }
 
-function fakeZli(): string {
+function fakeZli(script = FAKE_ZLI): string {
   const zliPath = join(scratch(), 'zli');
-  writeFileSync(zliPath, `#!${process.execPath}\n${FAKE_ZLI}`);
+  writeFileSync(zliPath, `#!${process.execPath}\n${script}`);
   chmodSync(zliPath, 0o755);
   return zliPath;
 }
@@ -158,5 +169,67 @@ describe('measureOpenZL', () => {
     expect(outcomes.map((outcome) => outcome.candidate?.index)).toEqual([1, 2, 3, 4]);
     expect(outcomes[1]).toEqual({candidate: {index: 2, total: 4}, error: new Error('Cannot load compressor: 1.zc')});
     expect(outcomes.filter((outcome) => 'measurement' in outcome)).toHaveLength(3);
+  });
+
+  it('kills a zli that ignores SIGTERM when the run is aborted, and cleans up', async () => {
+    const zliPath = fakeZli(HANGING_ZLI);
+    const inputPath = inputFile();
+    const runDirectories = () => readdirSync(tmpdir()).filter((entry) => entry.startsWith('openzl-playground-'));
+    const before = runDirectories();
+    const controller = new AbortController();
+    const events: ZliChildEvent[] = [];
+    const run = collect(
+      measureOpenZL(zliPath, inputPath, openZLJob(), {
+        signal: controller.signal,
+        onChild: (event) => events.push(event),
+      }),
+    );
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    // Aborting before the stand-in ignores SIGTERM would kill it at once.
+    await vi.waitFor(() => expect(existsSync(join(scratch(), 'ready'))).toBe(true));
+    const [{pid}] = events;
+
+    const abortedAt = Date.now();
+    controller.abort(new Error('Benchmark cancelled'));
+    await expect(run).rejects.toThrow('Benchmark cancelled');
+
+    // SIGTERM was ignored, so only the SIGKILL after the grace period ended it.
+    expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(1900);
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(events).toEqual([
+      {pid, state: 'spawned'},
+      {pid, state: 'exited'},
+    ]);
+    expect(runDirectories()).toEqual(before);
+  }, 10_000);
+
+  it('does not start zli once the run is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('Benchmark cancelled'));
+    const onChild = vi.fn();
+
+    await expect(
+      collect(measureOpenZL(fakeZli(HANGING_ZLI), inputFile(), openZLJob(), {signal: controller.signal, onChild})),
+    ).rejects.toThrow('Benchmark cancelled');
+    expect(onChild).not.toHaveBeenCalled();
+  });
+
+  it('does not report a cancel during a candidate as that candidate failing', async () => {
+    const controller = new AbortController();
+    const outcomes: unknown[] = [];
+    const run = (async () => {
+      for await (const outcome of measureOpenZL(
+        fakeZli(),
+        inputFile(),
+        openZLJob({paretoFrontier: true, candidates: 10}),
+        {signal: controller.signal},
+      )) {
+        outcomes.push(outcome);
+        controller.abort(new Error('Benchmark cancelled'));
+      }
+    })();
+
+    await expect(run).rejects.toThrow('Benchmark cancelled');
+    expect(outcomes).toHaveLength(1);
   });
 });
