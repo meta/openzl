@@ -170,7 +170,7 @@ describe('RunBenchmarkCard', () => {
           runBlockers={[]}
         />,
       );
-      expect(screen.getByText('Loading…')).toBeInTheDocument();
+      expect(screen.getByText(/Preparing for benchmarks/)).toBeInTheDocument();
       expect(barPercent()).toBe(0);
     });
   });

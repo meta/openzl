@@ -7,6 +7,7 @@ import ConfigureRunCard from './ConfigureRunCard.tsx';
 import RunBenchmarkCard from './RunBenchmarkCard.tsx';
 import UploadCard from './UploadCard.tsx';
 import {isRunInProgress, type RunConfig, type RunState} from '../benchmarkTypes.ts';
+import type {BackendSettings} from '../backend.ts';
 import type {CompressorRows} from '../useCompressorRows.ts';
 
 interface SetupColumnProps {
@@ -20,6 +21,9 @@ interface SetupColumnProps {
   onRun: ((config: RunConfig) => void) | null;
   onTrySample: (() => void) | null;
   runBlockers: readonly string[];
+  /** What differs by build; see `Backend`. */
+  settings?: BackendSettings;
+  loadProfiles?: () => Promise<unknown>;
 }
 
 export default function SetupColumn({
@@ -33,6 +37,8 @@ export default function SetupColumn({
   onRun,
   onTrySample,
   runBlockers,
+  settings = {},
+  loadProfiles,
 }: SetupColumnProps) {
   const [profilesReady, setProfilesReady] = useState(getOpenZlProfiles().length > 0);
   return (
@@ -43,6 +49,9 @@ export default function SetupColumn({
         iterations={iterations}
         onIterationsChange={onIterationsChange}
         onProfilesReady={setProfilesReady}
+        candidateCounts={settings.candidateCounts}
+        unavailableHeading={settings.unavailableHeading}
+        loadProfiles={loadProfiles}
       />
       <RunBenchmarkCard
         runConfig={runConfig}
