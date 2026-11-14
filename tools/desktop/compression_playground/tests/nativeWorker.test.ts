@@ -8,7 +8,15 @@ import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import type {DesktopRunConfig, RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts';
 import {planJobs, run} from '../electron/native-worker.cjs';
-import {fakeZli, inputFile as fakeInput, removeFakeZlis, UNORDERED_CANDIDATES_ZLI} from './fakeZli.ts';
+import {
+  FAKE_ZSTD_BENCHMARK,
+  fakeZli,
+  inputFile as fakeInput,
+  removeFakeZlis,
+  UNORDERED_CANDIDATES_ZLI,
+} from './fakeZli.ts';
+
+const zstdBenchmark = () => fakeZli(FAKE_ZSTD_BENCHMARK, 'zstd-benchmark');
 
 let workDirectory: string | undefined;
 
@@ -77,6 +85,7 @@ describe('run', () => {
     await run(
       {
         zliPath: join(tmpdir(), 'no-such-zli'),
+        zstdBenchmarkPath: zstdBenchmark(),
         config: config(
           [
             {rowId: 1, compressor: 'OpenZL', levels: [6], profile: 'serial', training: null},
@@ -121,6 +130,7 @@ describe('run', () => {
     await run(
       {
         zliPath: fakeZli(),
+        zstdBenchmarkPath: zstdBenchmark(),
         config: config(
           [
             {
@@ -160,6 +170,7 @@ describe('run', () => {
     await run(
       {
         zliPath: fakeZli(UNORDERED_CANDIDATES_ZLI),
+        zstdBenchmarkPath: zstdBenchmark(),
         config: config(
           [
             {
@@ -189,6 +200,7 @@ describe('run', () => {
       run(
         {
           zliPath: fakeZli(),
+          zstdBenchmarkPath: zstdBenchmark(),
           config: config([{rowId: 1, compressor: 'gzip', levels: [5]}], fakeInput()),
         },
         (message) => messages.push(message),
@@ -196,5 +208,32 @@ describe('run', () => {
       ),
     ).rejects.toThrow('Benchmark cancelled');
     expect(messages.map((message) => message.type)).toEqual(['loading', 'started']);
+  });
+
+  it('measures zstd with zstd-benchmark and derives throughput from its timings', async () => {
+    const messages: RunMessage[] = [];
+    await run(
+      {
+        zliPath: fakeZli(),
+        zstdBenchmarkPath: zstdBenchmark(),
+        config: {
+          input: {path: fakeInput(new Uint8Array(4000))},
+          iterations: 5,
+          compressors: [{rowId: 1, compressor: 'zstd', levels: [9]}],
+        },
+      },
+      (message) => messages.push(message),
+    );
+
+    // 4000 bytes, 5 times: 20 kB in 2 ms to compress and 1 ms to decompress.
+    const result = messages.find((message) => message.type === 'result');
+    expect(result?.type === 'result' && result.result).toMatchObject({
+      job: {id: '1-zstd-9'},
+      srcSize: 4000,
+      compressedSize: 9,
+      ratio: 4000 / 9,
+      compressMBps: 10,
+      decompressMBps: 20,
+    });
   });
 });
