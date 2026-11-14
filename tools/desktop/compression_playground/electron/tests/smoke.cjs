@@ -15,13 +15,14 @@ const {ensureChromiumSandbox, getPlatform, run, yarn} = require('../../setup.cjs
 const ROOT = path.join(__dirname, '..', '..');
 
 /**
- * Each test, what it needs built first, and whether it opens a window. Only
- * window-security runs inside Electron; the others run under Node and launch
- * Electron, or the packaged app, themselves.
+ * Each test, what it needs built first, and whether it opens a window.
+ * window-security and ui run inside Electron; the others run under Node and
+ * launch Electron, or the packaged app, themselves.
  */
 const SMOKE_TESTS = {
   'native-training': {needs: ['native'], window: false, electron: false},
   'window-security': {needs: ['native', 'renderer'], window: true, electron: true},
+  ui: {needs: ['native', 'renderer'], window: true, electron: true},
   cancellation: {needs: ['native', 'renderer'], window: true, electron: false},
   'packaged-app': {needs: ['native', 'renderer', 'package'], window: true, electron: false},
 };
