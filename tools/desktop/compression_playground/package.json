@@ -65,7 +65,8 @@
         "from": "electron/native/build/Release",
         "to": "native",
         "filter": [
-          "zli{,.exe}"
+          "zli{,.exe}",
+          "zstd-benchmark{,.exe}"
         ]
       },
       {
