@@ -6,7 +6,7 @@ import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
-import type {DesktopRunConfig, RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts';
+import type {RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts';
 import {planJobs, run} from '../electron/native-worker.cjs';
 import {
   FAKE_ZSTD_BENCHMARK,
@@ -35,7 +35,9 @@ function inputFile(): string {
   return inputPath;
 }
 
-function config(compressors: DesktopRunConfig['compressors'], path = '/tmp/sample.bin'): DesktopRunConfig {
+type ResolvedRunConfig = Parameters<typeof planJobs>[0];
+
+function config(compressors: ResolvedRunConfig['compressors'], path = '/tmp/sample.bin'): ResolvedRunConfig {
   return {input: {path}, iterations: 2, compressors};
 }
 
@@ -47,7 +49,7 @@ describe('planJobs', () => {
           rowId: 1,
           compressor: 'OpenZL',
           levels: [6],
-          profile: 'serial',
+          profile: 'csv',
           training: {paretoFrontier: true, candidates: 10},
         },
         {rowId: 2, compressor: 'zstd', levels: [1, 3]},
@@ -62,7 +64,7 @@ describe('planJobs', () => {
         level: 6,
         iterations: 2,
         compressor: 'OpenZL',
-        profile: 'serial',
+        profile: 'csv',
         training: {paretoFrontier: true, candidates: 10},
       },
       {id: '2-zstd-1', rowId: 2, level: 1, iterations: 2, compressor: 'zstd'},
