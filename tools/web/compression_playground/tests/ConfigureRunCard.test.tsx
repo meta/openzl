@@ -463,6 +463,17 @@ describe('ConfigureRunCard', () => {
     expect(candidates).toHaveValue('6');
   });
 
+  it('offers only the 30, 120 and 300 second training budgets', () => {
+    renderConfigureRunCard();
+
+    const time = screen.getByRole('combobox', {name: 'Training time budget for row 1'});
+    expect(optionValues(time)).toEqual(['30', '120', '300']);
+    expect(time).toHaveValue('30');
+
+    fireEvent.change(time, {target: {value: '300'}});
+    expect(time).toHaveValue('300');
+  });
+
   it('swaps the second dropdown when the compressor changes', async () => {
     renderConfigureRunCard([createCompressorRow(1, 'OpenZL'), createCompressorRow(2, 'zstd')]);
 
@@ -592,6 +603,21 @@ describe('ConfigureRunCard', () => {
     await waitFor(() => {
       expect(train.closest('label')).toHaveAttribute('data-state', 'unchecked');
       expect(candidates).toBeDisabled();
+    });
+  });
+
+  it('disables the training time budget while training is off', async () => {
+    renderConfigureRunCard();
+    const train = screen.getByRole('checkbox', {name: 'TRAIN'});
+    const time = screen.getByRole('combobox', {name: 'Training time budget for row 1'});
+
+    expect(time).toBeEnabled();
+
+    fireEvent.click(train);
+
+    await waitFor(() => {
+      expect(train.closest('label')).toHaveAttribute('data-state', 'unchecked');
+      expect(time).toBeDisabled();
     });
   });
 

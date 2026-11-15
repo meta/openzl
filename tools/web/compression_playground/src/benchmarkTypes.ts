@@ -16,8 +16,7 @@ interface CompressorConfigBase {
 
 /**
  * Present only when the row asks for training, so an untrained run cannot carry
- * a candidate count the worker would then act on. Training also takes a time
- * budget, which belongs here once the UI exposes it.
+ * a candidate count or time budget the worker would then act on.
  */
 export interface TrainingConfig {
   /**
@@ -37,8 +36,7 @@ export interface TrainingConfig {
   /**
    * Wall-clock budget in seconds. The trainers spend whatever they are given
    * rather than finishing early, so this sets how long a run takes rather than
-   * capping it. The UI does not offer it yet; the trained smoke test sets it,
-   * which is the only reason that test is seconds rather than minutes.
+   * capping it.
    */
   readonly maxTimeSecs?: number;
 }
@@ -186,7 +184,9 @@ export function toCompressorConfig(row: CompressorRow): CompressorConfig {
         compressor: row.compressor,
         levels: [row.level],
         profile: row.profile,
-        training: row.trainRequested ? {paretoFrontier: true, candidates: row.candidates} : null,
+        training: row.trainRequested
+          ? {paretoFrontier: true, candidates: row.candidates, maxTimeSecs: row.maxTrainTimeSecs}
+          : null,
       };
     case 'zstd':
     case 'gzip':
