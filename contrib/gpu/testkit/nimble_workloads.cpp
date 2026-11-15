@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "contrib/gpu/testkit/bytes.h"
+#include "contrib/gpu/testkit/parse_plan.h"
 #include "openzl/shared/bits.h"
 
 namespace openzl::gpu::testkit {
@@ -81,19 +82,14 @@ class TableBuilder {
             }
         }
         std::shuffle(alphabet.begin(), alphabet.end(), rng_);
-        std::vector<double> weights(p.cardinality);
-        for (size_t k = 0; k < weights.size(); ++k) {
-            weights[k] = 1.0 / static_cast<double>(k + 1);
-        }
         return { .alphabet = std::move(alphabet),
-                 .zipf     = std::discrete_distribution<uint64_t>(
-                         weights.begin(), weights.end()) };
+                 .zipf     = zipfDistribution<uint64_t>(p.cardinality) };
     }
 
-    // The planned-parse floats draw everything per frame, and their writers
+    // The planned-parse patterns draw everything per frame, and their writers
     // check their parameters against the frame size.
-    template <typename FloatParse>
-    ColumnTables operator()(const FloatParse& /* p */) const
+    template <typename PlannedParse>
+    ColumnTables operator()(const PlannedParse& /* p */) const
     {
         return {};
     }
@@ -139,11 +135,16 @@ class FrameWriter {
         }
     }
 
-    // The planned-parse floats write the whole frame in one call.
+    // The planned-parse patterns write the whole frame in one call.
     template <typename FloatParse>
     void operator()(const FloatParse& p)
     {
         out_ = writeFloats(p, numElts_, rng_);
+    }
+
+    void operator()(const PlannedInts& p)
+    {
+        out_ = writeInts(p, numElts_, rng_);
     }
 
    private:
@@ -219,10 +220,16 @@ class ColumnGenerator {
             : spec_{ spec },
               numElts_{ frameBytes / elementByteWidth(spec.type) }
     {
-        if (spec.type != NimbleNumericType::F32
-            && !std::holds_alternative<PinnedValues>(spec.pattern)) {
+        if (std::holds_alternative<PlannedInts>(spec.pattern)) {
+            if (spec.type != NimbleNumericType::U64) {
+                throw std::invalid_argument("PlannedInts need U64");
+            }
+        } else if (
+                spec.type != NimbleNumericType::F32
+                && !std::holds_alternative<PinnedValues>(spec.pattern)) {
             throw std::invalid_argument(
-                    "patterns other than PinnedValues need F32");
+                    "patterns other than PinnedValues and PlannedInts need "
+                    "F32");
         }
         if (frameBytes % elementByteWidth(spec.type) != 0) {
             throw std::invalid_argument("a frame must hold whole elements");

@@ -1,6 +1,6 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-// Decodes the OpenZL frames of testkit's f32 ladder on a pool of CPU threads,
+// Decodes the OpenZL frames of testkit's workloads on a pool of CPU threads,
 // as concurrent Nimble readers decompress their leaf streams. Each thread
 // decodes its own frames with decompressSerial(), with a new openzl::DCtx for
 // every frame (--dctx frame), one DCtx per thread (--dctx thread), or a DCtx
@@ -45,6 +45,8 @@
 
 #include "contrib/gpu/testkit/f32_ladder.h"
 #include "contrib/gpu/testkit/nimble_workloads.h"
+#include "contrib/gpu/testkit/u64_workloads.h"
+#include "contrib/gpu/testkit/zstd_workloads.h"
 #include "openzl/openzl.hpp"
 #include "tools/arg/arg_parser.h"
 
@@ -74,13 +76,17 @@ struct Options {
     std::vector<size_t> poolSlots  = { 1, 4, 16, 64 };
 };
 
-// The ladder steps, then the extra workloads.
+// The ladder steps, then the extra workloads, the zstd workloads, and the
+// 64-bit workloads.
 const std::vector<testkit::LadderStep>& workloads()
 {
     static const std::vector<testkit::LadderStep> all = [] {
         std::vector<testkit::LadderStep> list = testkit::f32Ladder();
-        const auto& extras                    = testkit::f32ExtraWorkloads();
-        list.insert(list.end(), extras.begin(), extras.end());
+        for (const auto* more : { &testkit::f32ExtraWorkloads(),
+                                  &testkit::zstdWorkloads(),
+                                  &testkit::u64Workloads() }) {
+            list.insert(list.end(), more->begin(), more->end());
+        }
         return list;
     }();
     return all;
@@ -170,7 +176,7 @@ Options parseOptions(int argc, char** argv)
             's',
             true,
             "Comma-separated workload numbers (ladder steps, then extra "
-            "workloads), or \"all\"");
+            "workloads, zstd workloads, and 64-bit workloads), or \"all\"");
     parser.addGlobalFlag("total-mib", 'm', true, "Decoded MiB per row");
     parser.addGlobalFlag(
             "frame-size",

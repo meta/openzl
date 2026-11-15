@@ -72,18 +72,8 @@ using FloatLiterals = std::variant<
         SignedOctaveFloats,
         WindowFloats>;
 
-// Literals from `literals`, plus two kinds of planned matches:
-// - Up to `runs` runs of `runLength` repeats of the previous value. field_lz
-//   encodes them as repeat matches.
-// - Up to `copies` copies of `copyLength` earlier values. field_lz encodes
-//   them as matches with explicit offsets, except a copy from distance 1,
-//   which repeats a value.
-// The writer places each run and copy at a random free position. It drops a
-// run or copy that collides 100 times in a row, so a dense plan gets fewer
-// matches on some frames.
-// Copies need exactly one distance option. With `copyOffsetCodes`, a copy
-// reads from distance [2^c, 2^(c+1)), with c uniform in [0, copyOffsetCodes).
-// With `minCopyDistance`, a copy reads from at least that far back.
+// Literals from `literals`, plus the runs and copies of the ParsePlan with
+// these fields (see parse_plan.h).
 struct PlannedFloats {
     FloatLiterals literals;
     uint32_t runs            = 0;
