@@ -249,13 +249,12 @@ GraphID fieldLz(
     return node(c, ZL_NODE_CONVERT_NUM_TO_STRUCT_LE, { lz });
 }
 
-// The census found these graphs in production frames that Nimble's numeric
-// graph wrote. We tuned the workload parameters so that each codec's share of
-// the input and its ratio come close to the census. The data must still suit
-// each codec. For example, step 4 keeps byte 3 of the field_lz literals
-// constant for constant_serial, and step 12 keeps the range small enough for
-// 1-byte range_pack output. The ladder test checks that the frames keep
-// their graphs.
+// Each step's graph is one that Nimble's numeric graph writes. The workload
+// parameters set each codec's share of the input and its ratio. The data must
+// still suit each codec. For example, step 4 keeps byte 3 of the field_lz
+// literals constant for constant_serial, and step 12 keeps the range small
+// enough for 1-byte range_pack output. The ladder test checks that the frames
+// keep their graphs.
 //
 // .graph is the decodeGraphShape() text of the frames (see frame_verifier.h).
 // Each codec appears as "ID:type(inputs)". ID is the codec ID. type is the
@@ -790,6 +789,138 @@ std::vector<LadderStep> buildExtraWorkloads()
                    "8:n2(24:s2(4:s2(9:b(1:n1(10:n1(50:b(28:n1(b),b)))),"
                    "22:b(b)),36:s2(7:s2(28:n2(b)),10:n1(50:b(28:n1(b),b))),"
                    "25:n4(10:n1(27:b(b)),b),26:n4(10:n1(b),b),10:n4(b)))))" },
+        // A small frame with few matches: the offset and literal length
+        // codes are too few for bitpack or FSE to gain, so field_lz stores
+        // them.
+        { .name = "f32/bitpacktokens-storedcodes",
+          .spec =
+                  f32(PlannedFloats{
+                          .literals        = PositiveFloats{ .tailShare   = 0.1,
+                                                             .tailOctaves = 32 },
+                          .runs            = 10,
+                          .runLength       = 2,
+                          .copies          = 30,
+                          .copyLength      = 2,
+                          .copyOffsetCodes = 6 }),
+          .frameBytes = 2 * kKiB,
+          .buildGraph =
+                  [](Compressor& c) {
+                      return numeric32(
+                              c,
+                              fieldLz(c,
+                                      transposeSplit(
+                                              c,
+                                              { store(),
+                                                store(),
+                                                store(),
+                                                huffman(c) }),
+                                      bitpackTokens(c),
+                                      quantOffsets(c, store()),
+                                      quantLengths(c, store()),
+                                      storeNum(c)));
+                  },
+          // clang-format off
+          // bitpack_int[n1] --#0--> huffman_v2[b] --#3--> transpose_split[s4] --#0--+--> field_lz[s4]
+          //                                                                         |
+          //                                                   bitpack_int[n2] --#1--+
+          //                                                                         |
+          //                                                     quant_off[n4] --#2--+
+          //                                                                         |
+          //                                                     quant_len[n4] --#3--+
+          // clang-format on
+          .graph = "9:b(8:n4(24:s4(4:s4(b,b,b,50:b(28:n1(b),b)),"
+                   "7:s2(28:n2(b)),25:n4(10:n1(b),b),26:n4(10:n1(b),b),"
+                   "10:n4(b))))" },
+        // A large frame that is mostly literals: the exponent byte passes
+        // the 100000 bytes at which the entropy graph cuts 32 KiB blocks,
+        // while the tokens stay few enough to bitpack. The literals span 30
+        // octaves, so that few of them repeat by chance and add matches.
+        { .name = "f32/splithuffman-fsecodes",
+          .spec =
+                  f32(PlannedFloats{
+                          .literals   = SignedOctaveFloats{ .octaves = 30 },
+                          .runs       = 4,
+                          .runLength  = 24,
+                          .copies     = 80,
+                          .copyLength = 2,
+                          .minCopyDistance = 256 }),
+          .frameBytes = 512 * kKiB,
+          .buildGraph =
+                  [](Compressor& c) {
+                      return numeric32(
+                              c,
+                              fieldLz(c,
+                                      transposeSplit(
+                                              c,
+                                              { store(),
+                                                store(),
+                                                store(),
+                                                splitSerial(c, huffman(c)) }),
+                                      bitpackTokens(c),
+                                      quantOffsets(c, fse(c)),
+                                      quantLengths(c, fse(c)),
+                                      quantLengths(c, store())));
+                  },
+          // clang-format off
+          // bitpack_int[n1] --#0--> huffman_v2[b] --#0--> splitn[b]* --#3--> transpose_split[s4] --#0--+--> field_lz[s4]
+          //                                                                                            |
+          //                                                                      bitpack_int[n2] --#1--+
+          //                                                                                            |
+          //                               fse_ncount[n2] --#0--> fse_v2[b] --#0--> quant_off[n4] --#2--+
+          //                                                                                            |
+          //                               fse_ncount[n2] --#0--> fse_v2[b] --#0--> quant_len[n4] --#3--+
+          //                                                                                            |
+          //                                                                        quant_len[n4] --#4--+
+          // clang-format on
+          .graph = "9:b(8:n4(24:s4(4:s4(b,b,b,40:b(50:b(28:n1(b),b))*),"
+                   "7:s2(28:n2(b)),25:n4(10:n1(49:b(52:n2(b),b)),b),"
+                   "26:n4(10:n1(49:b(52:n2(b),b)),b),26:n4(10:n1(b),b))))" },
+        // A large frame with more copies than f32/splithuffman-fsecodes: more
+        // than 128 tokens make Nimble tokenize them, and fewer than 256
+        // distinct tokens keep tokenize_fixed.
+        { .name = "f32/splithuffman-tokenizetokens",
+          .spec =
+                  f32(PlannedFloats{
+                          .literals   = SignedOctaveFloats{ .octaves = 30 },
+                          .runs       = 4,
+                          .runLength  = 24,
+                          .copies     = 800,
+                          .copyLength = 2,
+                          .minCopyDistance = 256 }),
+          .frameBytes = 512 * kKiB,
+          .buildGraph =
+                  [](Compressor& c) {
+                      return numeric32(
+                              c,
+                              fieldLz(c,
+                                      transposeSplit(
+                                              c,
+                                              { store(),
+                                                store(),
+                                                store(),
+                                                splitSerial(c, huffman(c)) }),
+                                      tokenizeTokens(c, huffman(c)),
+                                      quantOffsets(c, fse(c)),
+                                      quantLengths(c, fse(c)),
+                                      quantLengths(c, store())));
+                  },
+          // clang-format off
+          // bitpack_int[n1] --#0--> huffman_v2[b] --#0--> splitn[b]* --#3--> transpose_split[s4] --#0--+--> field_lz[s4]
+          //                                                                                            |
+          //                                        bitpack_int[n2] --#0--+--> tokenize_fixed[s2] --#1--+
+          //                                                              |                             |
+          //                  bitpack_int[n1] --#0--> huffman_v2[b] --#1--+                             |
+          //                                                                                            |
+          //                               fse_ncount[n2] --#0--> fse_v2[b] --#0--> quant_off[n4] --#2--+
+          //                                                                                            |
+          //                               fse_ncount[n2] --#0--> fse_v2[b] --#0--> quant_len[n4] --#3--+
+          //                                                                                            |
+          //                                                                        quant_len[n4] --#4--+
+          // clang-format on
+          .graph = "9:b(8:n4(24:s4(4:s4(b,b,b,40:b(50:b(28:n1(b),b))*),"
+                   "36:s2(7:s2(28:n2(b)),10:n1(50:b(28:n1(b),b))),"
+                   "25:n4(10:n1(49:b(52:n2(b),b)),b),"
+                   "26:n4(10:n1(49:b(52:n2(b),b)),b),26:n4(10:n1(b),b))))" },
     };
 }
 
