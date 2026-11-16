@@ -58,6 +58,8 @@ async function main() {
     module: typeof module,
     bridge: Object.keys(window.openzlDesktop).sort(),
     bridgeFrozen: Object.isFrozen(window.openzlDesktop),
+    origin: location.origin,
+    rendered: document.getElementById('root').childElementCount > 0,
     permissions: {
       notifications: await Notification.requestPermission(),
       geolocation: (await navigator.permissions.query({name: 'geolocation'})).state,
@@ -71,6 +73,8 @@ async function main() {
     module: 'undefined',
     bridge: ['benchmark', 'getPathForFile'],
     bridgeFrozen: true,
+    origin: 'app://bundle',
+    rendered: true,
     permissions: {notifications: 'denied', geolocation: 'denied', camera: 'denied', microphone: 'denied'},
   });
 
