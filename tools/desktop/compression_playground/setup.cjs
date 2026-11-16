@@ -10,6 +10,7 @@
 
 const {spawnSync} = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 /** The renderer's Vite and React come from the web tools' Yarn workspace. */
@@ -188,7 +189,9 @@ function buildNative(platform) {
     fs.rmSync(NATIVE_BUILD, {recursive: true, force: true});
   }
   run('cmake', ['-S', NATIVE_SOURCE, '-B', NATIVE_BUILD, '-DCMAKE_BUILD_TYPE=Release', ...cmakeArguments(platform)]);
-  run('cmake', ['--build', NATIVE_BUILD, '--config', 'Release', '--target', ...NATIVE_TARGETS]);
+  // Make, CMake's default generator on Linux and macOS, builds one file at a time otherwise.
+  const parallel = ['--parallel', process.env.CMAKE_BUILD_PARALLEL_LEVEL ?? String(os.availableParallelism())];
+  run('cmake', ['--build', NATIVE_BUILD, '--config', 'Release', ...parallel, '--target', ...NATIVE_TARGETS]);
 }
 
 /** @param {string[]} args */
@@ -201,7 +204,8 @@ function main(args) {
   if (args.length > 0) {
     throw new Error(`Unknown arguments: ${args.join(' ')}. Run with none, or with native.`);
   }
-  yarn(['--cwd', WEB_WORKSPACE, 'install']);
+  // In CI, as for `yarn install` there, the lockfile must already be right.
+  yarn(['--cwd', WEB_WORKSPACE, 'install', ...(process.env.CI === undefined ? [] : ['--frozen-lockfile'])]);
   if (platform === 'linux') {
     ensureAlsa();
     ensureChromiumSandbox(ELECTRON_DIST);
@@ -218,4 +222,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = {getPlatform};
+module.exports = {ensureChromiumSandbox, getPlatform, run, yarn};

@@ -14,16 +14,14 @@
     "dev": "yarn setup && electron electron/main.cjs --dev-server=auto",
     "build:renderer": "yarn --cwd ../../web/compression_playground tsc -b && yarn --cwd ../../web/compression_playground vite build --base ./ --outDir ../../desktop/compression_playground/dist --emptyOutDir",
     "build:native": "node setup.cjs native",
-    "test:native": "yarn build:native && node electron/tests/native-training-smoke.cjs",
-    "test:security": "yarn build:renderer && electron electron/tests/window-security-smoke.cjs",
-    "test:packaged": "yarn package && node electron/tests/packaged-app-smoke.cjs",
-    "test:cancel": "yarn build:renderer && yarn build:native && node electron/tests/cancellation-smoke.cjs",
     "build": "yarn setup && yarn build:renderer && electron-builder",
     "package": "yarn setup && yarn build:renderer && electron-builder --dir",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest",
-    "test:run": "vitest run"
+    "test": "yarn typecheck && yarn lint && yarn test:unit && yarn test:web && yarn test:smoke",
+    "test:unit": "vitest run",
+    "test:web": "yarn --cwd ../../web/compression_playground tsc -b && yarn --cwd ../../web/compression_playground lint && yarn --cwd ../../web/compression_playground test:run",
+    "test:smoke": "node electron/tests/smoke.cjs"
   },
   "dependencies": {
     "iconv-lite": "0.6.3",

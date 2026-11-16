@@ -5,9 +5,9 @@
 'use strict';
 
 // Checks that no zli process or scratch directory outlives a run that ends
-// early. Run with Node after `desktop:build:renderer` and `desktop:build:native`:
-// it relaunches this file under Electron once per scenario. Needs a display and
-// `ps`, so Linux or macOS.
+// early. Run with Node after `yarn build:renderer` and `yarn build:native`:
+// it relaunches this file under Electron once per scenario. Needs a display;
+// finds zli with `ps` on Linux and macOS and `tasklist` on Windows.
 
 const assert = require('node:assert/strict');
 const {execFileSync, spawn} = require('node:child_process');
@@ -15,7 +15,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const ZLI = path.resolve(__dirname, '..', 'native', 'build', 'Release', 'zli');
+const ZLI = path.resolve(
+  __dirname,
+  '..',
+  'native',
+  'build',
+  'Release',
+  process.platform === 'win32' ? 'zli.exe' : 'zli',
+);
 const SCENARIOS = ['cancel', 'busy', 'reload', 'kill-worker', 'quit'];
 const GONE_WITHIN_MS = 4000;
 const START_TIMEOUT_MS = 30_000;
@@ -57,6 +64,15 @@ async function waitUntil(check, timeoutMs) {
 }
 
 function zliTrainPids() {
+  if (process.platform === 'win32') {
+    // tasklist cannot show a process's arguments, but nothing else in a
+    // scenario runs zli before training starts, so any zli.exe is it.
+    return execFileSync('tasklist', ['/FO', 'CSV', '/NH', '/FI', 'IMAGENAME eq zli.exe'], {encoding: 'utf8'})
+      .split(/\r?\n/)
+      .map((line) => /^"zli\.exe","(\d+)"/i.exec(line))
+      .filter((match) => match !== null)
+      .map((match) => Number(match[1]));
+  }
   // Far past the default 1 MB: a busy machine's process list, long command
   // lines included, can outgrow it.
   return execFileSync('ps', ['-eo', 'pid=,args='], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024})
@@ -197,7 +213,7 @@ function runScenario(electron, scenario, sample) {
 }
 
 async function main() {
-  assert.ok(fs.existsSync(ZLI), `Build zli first (desktop:build:native): ${ZLI}`);
+  assert.ok(fs.existsSync(ZLI), `Build zli first (yarn build:native): ${ZLI}`);
   // Under Node, the electron package exports the path to its binary.
   const electron = require('electron');
   const workDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openzl-cancel-test-'));
