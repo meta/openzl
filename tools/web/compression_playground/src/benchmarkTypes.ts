@@ -171,6 +171,18 @@ export type WorkerMessage =
   | {readonly type: 'profiles'; readonly profiles: readonly ProfileMetadata[]}
   | {readonly type: 'profilesFailed'; readonly message: string};
 
+/** The messages that belong to a run, as opposed to the profile lookup. */
+export type RunMessage = Exclude<WorkerMessage, {type: 'profiles' | 'profilesFailed'}>;
+
+/**
+ * A run as the desktop app's backend takes it. The backend runs the native CLI,
+ * which reads the input where it is on disk, so the input is a path rather than
+ * the file itself; everything else is the browser's `RunConfig`.
+ */
+export interface DesktopRunConfig extends Omit<RunConfig, 'input'> {
+  readonly input: {readonly path: string};
+}
+
 /** What the page sends in. The `File` rides along, since it clones. */
 export type WorkerRequest = {readonly config: RunConfig; type: 'benchmarkRequest'} | {readonly type: 'profilesRequest'};
 
