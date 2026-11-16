@@ -372,12 +372,13 @@ function registerIpc() {
       if (!isTrustedSender(event)) {
         throw new Error('Untrusted benchmark request');
       }
+      // Concurrent runs would compete for CPU and distort each other's timings.
+      if (activeRuns.size > 0) {
+        throw new Error('A benchmark is already running');
+      }
       config = validateRequest(rawRequest);
     } catch (error) {
-      port.postMessage({
-        type: 'failed',
-        message: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-      });
+      port.postMessage({type: 'failed', message: messageOf(error)});
       port.close();
       return;
     }
