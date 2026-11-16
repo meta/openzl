@@ -7,9 +7,10 @@ import fsPromises from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {checkInputPath, measureOpenZL, type ZliChildEvent} from '../electron/zli-client.cjs';
+import {checkInputPath, measureOpenZL, measureZstd, type ZliChildEvent} from '../electron/zli-client.cjs';
 import {
   csvZli,
+  FAKE_ZSTD_BENCHMARK,
   fakeZli,
   HANGING_ZLI,
   inputFile,
@@ -289,5 +290,40 @@ describe('checkInputPath, on Windows, where zli reads paths in the ANSI code pag
 
   it('does not check paths when it is not told a code page and is not on Windows', async () => {
     await expect(checkInputPath('/data/Rīgā/input.bin')).resolves.toBe(resolve('/data/Rīgā/input.bin'));
+  });
+});
+
+describe('measureZstd', () => {
+  const runDirectories = () => readdirSync(tmpdir()).filter((entry) => entry.startsWith('openzl-playground-'));
+
+  it('benchmarks the input file where it is, at the requested level, and cleans up', async () => {
+    const before = runDirectories();
+
+    const result = await measureZstd(fakeZli(FAKE_ZSTD_BENCHMARK, 'zstd-benchmark'), inputFile(new Uint8Array(5)), {
+      level: 7,
+      iterations: 4,
+    });
+
+    expect(result).toEqual({iterations: 4, srcSize: 5, compressedSize: 7, compressMs: 2, decompressMs: 1});
+    expect(runDirectories()).toEqual(before);
+  });
+
+  it('reports what zstd-benchmark wrote to stderr when it fails', async () => {
+    const failing = fakeZli("process.stderr.write('Cannot open input file: x\\n'); process.exit(1);", 'zstd-benchmark');
+
+    await expect(measureZstd(failing, inputFile(), {level: 3, iterations: 1})).rejects.toThrow(
+      'Cannot open input file: x',
+    );
+  });
+
+  it('names zstd-benchmark when its CSV breaks the format', async () => {
+    const malformed = fakeZli(
+      csvZli('srcSize,compressedSize,compressionRatio,ctimeMs,dtimeMs,iters\nthree,2,1.5,1,1,1\n'),
+      'zstd-benchmark',
+    );
+
+    await expect(measureZstd(malformed, inputFile(), {level: 3, iterations: 1})).rejects.toThrow(
+      'zstd-benchmark returned an unexpected result (srcSize:',
+    );
   });
 });

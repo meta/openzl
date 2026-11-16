@@ -42,8 +42,10 @@ function openZLRow(profile, training) {
 }
 
 async function main() {
-  const executable = process.platform === 'win32' ? 'zli.exe' : 'zli';
-  const zliPath = path.resolve(__dirname, '..', 'native', 'build', 'Release', executable);
+  const binary = (name) =>
+    path.resolve(__dirname, '..', 'native', 'build', 'Release', process.platform === 'win32' ? `${name}.exe` : name);
+  const zliPath = binary('zli');
+  const zstdBenchmarkPath = binary('zstd-benchmark');
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openzl-playground-'));
   try {
     // A space in the path, which zli must be passed as one argument.
@@ -52,6 +54,7 @@ async function main() {
 
     const results = await runAll({
       zliPath,
+      zstdBenchmarkPath,
       config: {
         input: {path: inputPath},
         iterations: 1,
@@ -75,9 +78,17 @@ async function main() {
 
     const untrained = await runAll({
       zliPath,
-      config: {input: {path: inputPath}, iterations: 1, compressors: [openZLRow('serial', null)]},
+      zstdBenchmarkPath,
+      config: {
+        input: {path: inputPath},
+        iterations: 1,
+        compressors: [openZLRow('serial', null), {rowId: 2, compressor: 'zstd', levels: [3]}],
+      },
     });
-    if (untrained.length !== 1 || untrained[0].candidate !== null || untrained[0].srcSize !== SAMPLE_SIZE) {
+    if (
+      untrained.length !== 2 ||
+      untrained.some((result) => result.candidate !== null || result.srcSize !== SAMPLE_SIZE)
+    ) {
       throw new Error('Native untrained benchmark returned an invalid result');
     }
 
@@ -85,6 +96,7 @@ async function main() {
     try {
       await runAll({
         zliPath,
+        zstdBenchmarkPath,
         config: {input: {path: inputPath}, iterations: 1, compressors: [openZLRow('not-a-profile', null)]},
       });
     } catch (error) {

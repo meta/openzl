@@ -28,6 +28,7 @@
 /**
  * @typedef {object} MeasureContext
  * @property {string} zliPath
+ * @property {string} zstdBenchmarkPath
  * @property {string} inputPath
  * @property {() => Promise<Buffer>} readInput
  * @property {string} [tempRoot]
@@ -37,11 +38,11 @@
 const fs = require('node:fs/promises');
 const {performance} = require('node:perf_hooks');
 const zlib = require('node:zlib');
-const {checkInputPath, measureOpenZL} = require('./zli-client.cjs');
+const {checkInputPath, measureOpenZL, measureZstd} = require('./zli-client.cjs');
 
 /**
- * The codecs are synchronous, so the worker yields between timed iterations to
- * receive a cancel message. Only the codec calls themselves are timed.
+ * zlib is synchronous, so the worker yields between timed iterations to receive
+ * a cancel message. Only the codec calls themselves are timed.
  *
  * @param {number} iterations
  * @param {AbortSignal | undefined} signal
@@ -61,64 +62,29 @@ async function timedIterations(iterations, signal, operation) {
 }
 
 /**
+ * gzip stays on Electron's zlib, since OpenZL does not vendor zlib.
+ *
  * @param {Buffer} input
+ * @param {number} level
  * @param {number} iterations
- * @param {(value: Buffer) => Buffer} compress
- * @param {(value: Buffer) => Buffer} decompress
  * @param {AbortSignal} [signal]
  * @returns {Promise<ZliMeasurement>}
  */
-async function nativeCodecBenchmark(input, iterations, compress, decompress, signal) {
+async function benchmarkGzip(input, level, iterations, signal) {
+  const compress = () => zlib.gzipSync(input, {level});
   // The untimed warm-up calls cannot be interrupted either, so check first.
   signal?.throwIfAborted();
-  compress(input);
-  const {elapsedMs: compressMs, output: compressed} = await timedIterations(iterations, signal, () => compress(input));
+  compress();
+  const {elapsedMs: compressMs, output: compressed} = await timedIterations(iterations, signal, compress);
 
+  const decompress = () => zlib.gunzipSync(compressed);
   signal?.throwIfAborted();
-  decompress(compressed);
-  const {elapsedMs: decompressMs, output: decompressed} = await timedIterations(iterations, signal, () =>
-    decompress(compressed),
-  );
+  decompress();
+  const {elapsedMs: decompressMs, output: decompressed} = await timedIterations(iterations, signal, decompress);
   if (!decompressed.equals(input)) {
-    throw new Error('Native codec did not reproduce the input');
+    throw new Error('gzip did not reproduce the input');
   }
   return {iterations, srcSize: input.length, compressedSize: compressed.length, compressMs, decompressMs};
-}
-
-/**
- * @param {Buffer} input
- * @param {number} level
- * @param {number} iterations
- * @param {AbortSignal} [signal]
- */
-function benchmarkZstd(input, level, iterations, signal) {
-  if (typeof zlib.zstdCompressSync !== 'function' || typeof zlib.zstdDecompressSync !== 'function') {
-    throw new Error('This Electron runtime does not include native zstd support');
-  }
-  const params = {[zlib.constants.ZSTD_c_compressionLevel]: level};
-  return nativeCodecBenchmark(
-    input,
-    iterations,
-    (value) => zlib.zstdCompressSync(value, {params}),
-    (value) => zlib.zstdDecompressSync(value),
-    signal,
-  );
-}
-
-/**
- * @param {Buffer} input
- * @param {number} level
- * @param {number} iterations
- * @param {AbortSignal} [signal]
- */
-function benchmarkGzip(input, level, iterations, signal) {
-  return nativeCodecBenchmark(
-    input,
-    iterations,
-    (value) => zlib.gzipSync(value, {level}),
-    (value) => zlib.gunzipSync(value),
-    signal,
-  );
 }
 
 /**
@@ -190,7 +156,7 @@ function planJobs(config) {
  * @param {MeasureContext & RunOptions} context
  * @returns {AsyncGenerator<Measurement>}
  */
-async function* measure(job, {zliPath, inputPath, readInput, tempRoot, onStep, signal, onChild}) {
+async function* measure(job, {zliPath, zstdBenchmarkPath, inputPath, readInput, tempRoot, onStep, signal, onChild}) {
   switch (job.compressor) {
     case 'OpenZL':
       for await (const outcome of measureOpenZL(zliPath, inputPath, job, {
@@ -205,7 +171,7 @@ async function* measure(job, {zliPath, inputPath, readInput, tempRoot, onStep, s
       }
       return;
     case 'zstd': {
-      const measurement = await benchmarkZstd(await readInput(), job.level, job.iterations, signal);
+      const measurement = await measureZstd(zstdBenchmarkPath, inputPath, job, {signal, onChild, tempRoot});
       yield {type: 'result', result: {...withThroughput(measurement), job, candidate: null}};
       return;
     }
@@ -226,11 +192,11 @@ async function* measure(job, {zliPath, inputPath, readInput, tempRoot, onStep, s
  * time, since these are wall-clock timings. A failed job does not stop the run;
  * only cancelling does, and then run() rejects with the signal's reason.
  *
- * @param {{zliPath: string; config: DesktopRunConfig; tempRoot?: string}} payload
+ * @param {{zliPath: string; zstdBenchmarkPath: string; config: DesktopRunConfig; tempRoot?: string}} payload
  * @param {(message: RunMessage) => void} post
  * @param {RunOptions} [options]
  */
-async function run({zliPath, config, tempRoot}, post, {signal, onChild} = {}) {
+async function run({zliPath, zstdBenchmarkPath, config, tempRoot}, post, {signal, onChild} = {}) {
   post({type: 'loading'});
   // Once for the whole run, so a path zli cannot read fails the run before any
   // job starts rather than failing every job.
@@ -239,11 +205,11 @@ async function run({zliPath, config, tempRoot}, post, {signal, onChild} = {}) {
   post({type: 'started', totalJobs: jobs.length, rejected});
   /** @type {Promise<Buffer> | undefined} */
   let input;
-  // Only zstd and gzip need the bytes; zli reads the file itself.
+  // Only gzip needs the bytes; zli and zstd-benchmark read the file themselves.
   const readInput = () => (input ??= fs.readFile(inputPath));
   /** @param {number} fraction */
   const onStep = (fraction) => post({type: 'step', fraction});
-  const context = {zliPath, inputPath, readInput, tempRoot, onStep, signal, onChild};
+  const context = {zliPath, zstdBenchmarkPath, inputPath, readInput, tempRoot, onStep, signal, onChild};
   for (const job of jobs) {
     signal?.throwIfAborted();
     try {
@@ -263,9 +229,9 @@ async function run({zliPath, config, tempRoot}, post, {signal, onChild} = {}) {
 }
 
 /**
- * Worker protocol. From the main process: {type: 'start', zliPath, config,
- * tempRoot}, then optionally {type: 'cancel'}. To it: {type: 'child', pid,
- * state} for every zli process, run()'s messages, ending in exactly one of
+ * Worker protocol. From the main process: {type: 'start', zliPath,
+ * zstdBenchmarkPath, config, tempRoot}, then optionally {type: 'cancel'}. To
+ * it: {type: 'child', pid, state} for every native process, run()'s messages, ending in exactly one of
  * {type: 'finished'}, {type: 'failed', message}, or {type: 'cancelled'}.
  *
  * @param {Electron.ParentPort} parentPort

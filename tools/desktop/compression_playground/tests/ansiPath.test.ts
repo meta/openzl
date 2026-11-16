@@ -5,7 +5,7 @@
 import childProcess from 'node:child_process';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {
-  assertReadableByZli,
+  assertReadableByNativeTools,
   parseCodePage,
   unrepresentableCharacters,
   windowsAnsiCodePage,
@@ -73,24 +73,24 @@ describe('unrepresentableCharacters', () => {
   });
 });
 
-describe('assertReadableByZli', () => {
+describe('assertReadableByNativeTools', () => {
   it('says what is wrong, which code page, and how to fix it', () => {
     expect(() => {
-      assertReadableByZli('C:\\Users\\Rīgā\\a.bin', 'The input path', 'Rename the file.', 1252);
+      assertReadableByNativeTools('C:\\Users\\Rīgā\\a.bin', 'The input path', 'Rename the file.', 1252);
     }).toThrow(
-      'The input path contains "ī", "ā", which this PC\'s ANSI code page (1252) cannot represent, and the OpenZL command-line tool reads paths in that code page. Rename the file.',
+      'The input path contains "ī", "ā", which this PC\'s ANSI code page (1252) cannot represent, and the native benchmark tools (zli, zstd-benchmark) read paths in that code page. Rename the file.',
     );
   });
 
   it('shows three characters and says there are more', () => {
     expect(() => {
-      assertReadableByZli('C:\\ユーザー\\データ.bin', 'The input path', 'Rename it.', 1252);
+      assertReadableByNativeTools('C:\\ユーザー\\データ.bin', 'The input path', 'Rename it.', 1252);
     }).toThrow(/contains "[^"]", "[^"]", "[^"]" and more, which/);
   });
 
   it('is silent for a path the code page can read', () => {
     expect(() => {
-      assertReadableByZli('C:\\Users\\José\\a.bin', 'The input path', 'Rename it.', 1252);
+      assertReadableByNativeTools('C:\\Users\\José\\a.bin', 'The input path', 'Rename it.', 1252);
     }).not.toThrow();
   });
 });

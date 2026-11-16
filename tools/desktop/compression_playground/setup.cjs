@@ -16,7 +16,7 @@ const path = require('node:path');
 const WEB_WORKSPACE = path.join(__dirname, '..', '..', 'web');
 const NATIVE_SOURCE = path.join(__dirname, 'electron', 'native');
 const NATIVE_BUILD = path.join(NATIVE_SOURCE, 'build');
-const NATIVE_TARGETS = ['zli'];
+const NATIVE_TARGETS = ['zli', 'zstd-benchmark'];
 const ELECTRON_DIST = path.join(__dirname, 'node_modules', 'electron', 'dist');
 
 /** @typedef {'linux' | 'mac' | 'windows'} Platform */
