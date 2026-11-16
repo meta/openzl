@@ -43,10 +43,6 @@ declare global {
   }
 }
 
-export function desktopBridge(): OpenZLDesktopBridge | undefined {
-  return typeof window === 'undefined' ? undefined : window.openzlDesktop;
-}
-
 let desktopProfiles: Promise<readonly ProfileMetadata[]> | undefined;
 
 /**

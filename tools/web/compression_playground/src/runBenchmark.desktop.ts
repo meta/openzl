@@ -2,7 +2,6 @@
 
 import type {ProfileMetadata} from '../../../wasm/js/wasm_api.js';
 import type {RunConfig, RunState} from './benchmarkTypes.ts';
-import {desktopBridge, loadDesktopProfiles} from './desktop.ts';
 
 /**
  * Replaces `runBenchmark.ts` in the desktop build (see vite.config.ts). The
@@ -15,8 +14,7 @@ export function runBenchmark(_config: RunConfig, onState: (state: RunState) => v
   onState({status: 'error', message: UNAVAILABLE, results: [], failures: []});
 }
 
-/** The app's profiles, from its `zli`; this build has no WASM module to ask. */
+/** With a bridge the page uses the desktop backend, so this only runs when it is missing. */
 export function getBenchmarkProfiles(): Promise<readonly ProfileMetadata[]> {
-  const bridge = desktopBridge();
-  return bridge === undefined ? Promise.reject(new Error(UNAVAILABLE)) : loadDesktopProfiles(bridge);
+  return Promise.reject(new Error(UNAVAILABLE));
 }
