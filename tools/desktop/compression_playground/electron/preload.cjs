@@ -10,30 +10,31 @@ const {contextBridge, ipcRenderer, webUtils} = require('electron');
 
 /**
  * Starts a run on a port of its own, so the page never handles IPC or ports
- * directly. `messages` resolves with every message the run sent, in order, once
- * it finishes, and rejects if it fails or is cancelled.
+ * directly. `onMessage` hears each of the run's messages as it arrives, the
+ * browser worker's `WorkerMessage`s from `loading` to `finished` or `failed`;
+ * `done` then settles, rejecting if the run failed or was cancelled.
  *
  * @param {DesktopRunConfig} config
+ * @param {(message: RunMessage) => void} [onMessage]
  */
-function startBenchmark(config) {
+function startBenchmark(config, onMessage) {
   const {port1, port2} = new MessageChannel();
   let settled = false;
-  /** @type {RunMessage[]} */
-  const received = [];
-  /** @type {Promise<RunMessage[]>} */
-  const messages = new Promise((resolve, reject) => {
+  /** @type {Promise<void>} */
+  const done = new Promise((resolve, reject) => {
     port1.onmessage = ({data}) => {
-      if (data?.type === 'failed' || data?.type === 'cancelled') {
-        settled = true;
-        port1.close();
-        reject(new Error(data.type === 'cancelled' ? 'Benchmark cancelled' : data.message));
+      if (data?.type !== 'cancelled') {
+        onMessage?.(data);
+      }
+      if (data?.type !== 'finished' && data?.type !== 'failed' && data?.type !== 'cancelled') {
         return;
       }
-      received.push(data);
-      if (data?.type === 'finished') {
-        settled = true;
-        port1.close();
-        resolve(received);
+      settled = true;
+      port1.close();
+      if (data.type === 'finished') {
+        resolve();
+      } else {
+        reject(new Error(data.type === 'cancelled' ? 'Benchmark cancelled' : data.message));
       }
     };
   });
@@ -44,7 +45,7 @@ function startBenchmark(config) {
       port1.postMessage({type: 'cancel'});
     }
   };
-  return Object.freeze({messages, cancel});
+  return Object.freeze({done, cancel});
 }
 
 contextBridge.exposeInMainWorld(

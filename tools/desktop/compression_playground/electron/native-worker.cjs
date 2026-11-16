@@ -25,6 +25,15 @@
  * @property {(event: ZliChildEvent) => void} [onChild]
  */
 
+/**
+ * @typedef {object} MeasureContext
+ * @property {string} zliPath
+ * @property {string} inputPath
+ * @property {() => Promise<Buffer>} readInput
+ * @property {string} [tempRoot]
+ * @property {(fraction: number) => void} onStep How far the job is through its training, as zli reports it.
+ */
+
 const fs = require('node:fs/promises');
 const {performance} = require('node:perf_hooks');
 const zlib = require('node:zlib');
@@ -178,13 +187,18 @@ function planJobs(config) {
  * its frontier is still measured.
  *
  * @param {BenchmarkJob} job
- * @param {{zliPath: string; inputPath: string; readInput: () => Promise<Buffer>; tempRoot?: string} & RunOptions} context
+ * @param {MeasureContext & RunOptions} context
  * @returns {AsyncGenerator<Measurement>}
  */
-async function* measure(job, {zliPath, inputPath, readInput, tempRoot, signal, onChild}) {
+async function* measure(job, {zliPath, inputPath, readInput, tempRoot, onStep, signal, onChild}) {
   switch (job.compressor) {
     case 'OpenZL':
-      for await (const outcome of measureOpenZL(zliPath, inputPath, job, {signal, onChild, tempRoot})) {
+      for await (const outcome of measureOpenZL(zliPath, inputPath, job, {
+        signal,
+        onChild,
+        tempRoot,
+        onProgress: onStep,
+      })) {
         yield 'error' in outcome
           ? {type: 'failure', failure: {job, candidate: outcome.candidate, message: messageOf(outcome.error)}}
           : {type: 'result', result: {...withThroughput(outcome.measurement), job, candidate: outcome.candidate}};
@@ -204,8 +218,11 @@ async function* measure(job, {zliPath, inputPath, readInput, tempRoot, signal, o
 
 /**
  * Runs `config`, posting the browser worker's messages in its order:
- * `loading`, `started` with the job count, a `result` per measurement or a
- * `failure` for a job that could not be measured, then `finished`. One job at a
+ * `loading`, `started` with the job count, a `result` per measurement as soon
+ * as it is made or a `failure` for a job that could not be measured, then
+ * `finished`. While a job trains, `step` carries how far through training it
+ * is, as the browser forwards its trainer's progress; the page places that
+ * within the job's share of the run. One job at a
  * time, since these are wall-clock timings. A failed job does not stop the run;
  * only cancelling does, and then run() rejects with the signal's reason.
  *
@@ -221,7 +238,9 @@ async function run({zliPath, config, tempRoot}, post, {signal, onChild} = {}) {
   let input;
   // Only zstd and gzip need the bytes; zli reads the file itself.
   const readInput = () => (input ??= fs.readFile(config.input.path));
-  const context = {zliPath, inputPath: config.input.path, readInput, tempRoot, signal, onChild};
+  /** @param {number} fraction */
+  const onStep = (fraction) => post({type: 'step', fraction});
+  const context = {zliPath, inputPath: config.input.path, readInput, tempRoot, onStep, signal, onChild};
   for (const job of jobs) {
     signal?.throwIfAborted();
     try {

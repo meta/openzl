@@ -62,20 +62,72 @@ function terminate(child) {
   child.once('exit', () => clearTimeout(escalate));
 }
 
+// At --verbose 3, zli prints a progress bar on stderr for each step of
+// training, one line per redraw on a pipe:
+// `[=====---------------------------------------------] Training ACE graph 1 / 2: ACE progress`.
+const PROGRESS_LINE = /^\[([=-]+)\] /;
+const GRAPH_COUNTER = /\bgraph (\d+) \/ (\d+)\b/;
+
 /**
+ * How far through training a zli progress line says it is, or undefined for
+ * any other line. Each ACE graph gets a bar of its own that starts again from
+ * empty, so a bar's fill is placed within its graph's share of the whole.
+ *
+ * @param {string} line
+ * @returns {number | undefined}
+ */
+function progressFraction(line) {
+  const bar = PROGRESS_LINE.exec(line)?.[1];
+  if (bar === undefined) {
+    return undefined;
+  }
+  const fill = bar.replaceAll('-', '').length / bar.length;
+  const [, graph = 0, graphs = 0] = GRAPH_COUNTER.exec(line)?.map(Number) ?? [];
+  return graph >= 1 && graphs >= graph ? (graph - 1 + fill) / graphs : fill;
+}
+
+/**
+ * What zli printed about why it failed. Its progress and other INFO lines come
+ * first; a fatal error comes last, usually as a heading and its tab-indented
+ * detail (`I/O Exception:` then `\tFailed to open input file ...`), otherwise
+ * as one line. Empty when zli was killed by a signal (a crash, or out of
+ * memory) and printed no heading: whatever INFO line came last says nothing
+ * about that, so the signal is reported instead.
+ *
+ * @param {string} stderr
+ * @param {boolean} killed
+ */
+function failureFromVerboseStderr(stderr, killed) {
+  const lines = stderr
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => progressFraction(line) === undefined);
+  const heading = lines.findLastIndex((line, index) => !line.startsWith('\t') && lines[index + 1]?.startsWith('\t'));
+  if (heading !== -1) {
+    return lines.slice(heading).join('\n');
+  }
+  return killed ? '' : (lines.at(-1) ?? '');
+}
+
+/**
+ * Runs zli, which reports failures on stderr. With `onProgress`, zli runs at
+ * --verbose 3: each progress line is reported as a fraction, and only the
+ * fatal error is kept as the failure message.
+ *
  * @param {string} zliPath
  * @param {string[]} args
- * @param {ZliContext} context
+ * @param {ZliContext & {onProgress?: (fraction: number) => void}} context
  * @returns {Promise<void>}
  */
-function runZli(zliPath, args, {signal, onChild}) {
+function runZli(zliPath, args, {signal, onChild, onProgress}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason);
       return;
     }
-    // --verbose 1 limits stderr to errors, so a failure message can be shown as-is.
-    const child = spawn(zliPath, [...args, '--verbose', '1'], {
+    // --verbose 1 limits stderr to errors, so a failure message can be shown
+    // as-is; 3 adds the progress lines `onProgress` reads.
+    const child = spawn(zliPath, [...args, '--verbose', onProgress === undefined ? '1' : '3'], {
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
     });
@@ -109,9 +161,24 @@ function runZli(zliPath, args, {signal, onChild}) {
       onChild?.({pid: child.pid, state: 'spawned'});
     }
 
+    // The end of the last chunk, until the rest of its line arrives.
+    let partialLine = '';
     child.stderr.on('data', (/** @type {string} */ chunk) => {
-      process.stderr.write(chunk);
       stderr += chunk;
+      if (onProgress === undefined) {
+        process.stderr.write(chunk);
+        return;
+      }
+      const lines = (partialLine + chunk).split(/\r?\n/);
+      partialLine = lines.pop() ?? '';
+      for (const line of lines) {
+        const fraction = progressFraction(line);
+        if (fraction === undefined) {
+          process.stderr.write(`${line}\n`);
+        } else {
+          onProgress(fraction);
+        }
+      }
     });
     child.once('error', (error) => {
       cleanup();
@@ -119,6 +186,10 @@ function runZli(zliPath, args, {signal, onChild}) {
     });
     child.once('close', (code, exitSignal) => {
       cleanup();
+      // A last line with no newline after it, which the 'data' handler held back.
+      if (partialLine !== '' && progressFraction(partialLine) === undefined) {
+        process.stderr.write(`${partialLine}\n`);
+      }
       if (child.pid !== undefined) {
         onChild?.({pid: child.pid, state: 'exited'});
       }
@@ -130,7 +201,7 @@ function runZli(zliPath, args, {signal, onChild}) {
         return;
       }
       if (code !== 0) {
-        const detail = stderr.trim();
+        const detail = onProgress === undefined ? stderr.trim() : failureFromVerboseStderr(stderr, exitSignal !== null);
         fail(
           new Error(
             detail !== ''
@@ -206,7 +277,7 @@ async function benchmark(zliPath, inputPath, compressorArgs, job, csvPath, conte
  * @param {OpenZlBenchmarkJob} job
  * @param {number} candidates
  * @param {string} outputDirectory
- * @param {ZliContext} context
+ * @param {ZliContext & {onProgress?: (fraction: number) => void}} context
  */
 async function trainedCandidatePaths(zliPath, inputPath, job, candidates, outputDirectory, context) {
   await runZli(
@@ -260,17 +331,18 @@ async function removeScratch(directory) {
  * --level, so each candidate is benchmarked again with the job's settings. As
  * in the browser, a candidate that cannot be benchmarked is yielded as an error
  * and its siblings are still measured; anything else, training included,
- * throws, and so does cancelling, which stops the running zli. zli reads
+ * throws, and so does cancelling, which stops the running zli. While training,
+ * `onProgress` hears each fraction zli's progress bar shows. zli reads
  * `inputPath` where it is; only its CSV and candidate files go in a scratch
  * directory under `tempRoot`, which defaults to the OS temp directory.
  *
  * @param {string} zliPath
  * @param {string} inputPath
  * @param {OpenZlBenchmarkJob} job
- * @param {ZliContext & {tempRoot?: string}} [options]
+ * @param {ZliContext & {tempRoot?: string; onProgress?: (fraction: number) => void}} [options]
  * @returns {AsyncGenerator<OpenZLOutcome>}
  */
-async function* measureOpenZL(zliPath, inputPath, job, {signal, onChild, tempRoot = os.tmpdir()} = {}) {
+async function* measureOpenZL(zliPath, inputPath, job, {signal, onChild, onProgress, tempRoot = os.tmpdir()} = {}) {
   const context = {signal, onChild};
   // Absolute paths never start with '-', so zli cannot parse them as flags.
   const input = path.resolve(inputPath);
@@ -288,7 +360,7 @@ async function* measureOpenZL(zliPath, inputPath, job, {signal, onChild, tempRoo
       job,
       job.training.candidates,
       path.join(workDirectory, 'candidates'),
-      context,
+      {...context, onProgress},
     );
     for (const [index, candidatePath] of candidatePaths.entries()) {
       const candidate = {index: index + 1, total: candidatePaths.length};
@@ -311,4 +383,4 @@ async function* measureOpenZL(zliPath, inputPath, job, {signal, onChild, tempRoo
   }
 }
 
-module.exports = {measureOpenZL};
+module.exports = {measureOpenZL, progressFraction};
