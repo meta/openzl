@@ -5,9 +5,9 @@
 import {existsSync, readdirSync, readFileSync, rmSync} from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {dirname, join} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {measureOpenZL, type ZliChildEvent} from '../electron/zli-client.cjs';
+import {checkInputPath, measureOpenZL, type ZliChildEvent} from '../electron/zli-client.cjs';
 import {
   csvZli,
   fakeZli,
@@ -43,6 +43,16 @@ function failingTraining(stderr: string, exit: string): string {
 }
 
 describe('measureOpenZL', () => {
+  it('on Windows, refuses an input path the code page cannot represent, before zli starts', async () => {
+    const onChild = vi.fn();
+    await expect(
+      collect(
+        measureOpenZL(fakeZli('process.exit(99);'), '/data/Rīgā/input.bin', openZLJob(), {codePage: 1252, onChild}),
+      ),
+    ).rejects.toThrow('The input file path contains "ī", "ā", which this PC\'s ANSI code page (1252) cannot represent');
+    expect(onChild).not.toHaveBeenCalled();
+  });
+
   it('reads a CSV written with CRLF line endings and no path column', async () => {
     // On Windows zli writes CRLF, which would otherwise leave a CR on `iters`.
     process.env.FAKE_ZLI_EOL = '\r\n';
@@ -248,5 +258,36 @@ if (args[0] === 'train') {
 
     await expect(run).rejects.toThrow('Benchmark cancelled');
     expect(outcomes).toHaveLength(1);
+  });
+});
+
+describe('checkInputPath, on Windows, where zli reads paths in the ANSI code page', () => {
+  it('refuses an input path the code page cannot represent', async () => {
+    await expect(checkInputPath('/data/Rīgā/input.bin', {codePage: 1252})).rejects.toThrow(
+      'The input file path contains "ī", "ā", which this PC\'s ANSI code page (1252) cannot represent',
+    );
+  });
+
+  it('refuses a temp folder it cannot represent, which every file of the run lives under', async () => {
+    await expect(checkInputPath('/data/input.bin', {codePage: 1252, tempRoot: '/tmp/Ünïcödé-ā'})).rejects.toThrow(
+      'The temporary folder path contains',
+    );
+  });
+
+  it('lets through a path the code page can represent, made absolute', async () => {
+    await expect(checkInputPath('/data/Алексей/input.bin', {codePage: 1251})).resolves.toBe(
+      resolve('/data/Алексей/input.bin'),
+    );
+  });
+
+  it('lets a path through as it is when the code page cannot be checked', async () => {
+    // 99999 stands in for a code page iconv-lite does not know.
+    await expect(checkInputPath('/data/Rīgā/input.bin', {codePage: 99999})).resolves.toBe(
+      resolve('/data/Rīgā/input.bin'),
+    );
+  });
+
+  it('does not check paths when it is not told a code page and is not on Windows', async () => {
+    await expect(checkInputPath('/data/Rīgā/input.bin')).resolves.toBe(resolve('/data/Rīgā/input.bin'));
   });
 });
