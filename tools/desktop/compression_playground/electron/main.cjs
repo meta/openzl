@@ -464,6 +464,8 @@ async function createWindow() {
     minWidth: 900,
     minHeight: 640,
     title: 'OpenZL Compression Playground',
+    // Linux and Windows draw the window and taskbar icon from this; macOS uses the bundle's.
+    icon: path.join(__dirname, 'icon.png'),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
