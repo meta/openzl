@@ -17,6 +17,7 @@
     "test:native": "yarn build:native && node electron/tests/native-training-smoke.cjs",
     "test:security": "yarn build:renderer && electron electron/tests/window-security-smoke.cjs",
     "test:packaged": "yarn package && node electron/tests/packaged-app-smoke.cjs",
+    "test:cancel": "yarn build:renderer && yarn build:native && node electron/tests/cancellation-smoke.cjs",
     "build": "yarn setup && yarn build:renderer && electron-builder",
     "package": "yarn setup && yarn build:renderer && electron-builder --dir",
     "lint": "eslint .",

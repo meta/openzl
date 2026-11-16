@@ -15,6 +15,7 @@ const TRAINING_THREADS = Math.min(4, Math.max(1, os.availableParallelism()));
 // The leading columns of zli benchmark --output-csv. The path column after them
 // is not read, so a quoted path cannot shift the numbers.
 const CSV_COLUMNS = ['srcSize', 'compressedSize', 'compressionRatio', 'ctimeMs', 'dtimeMs', 'iters'];
+const KILL_GRACE_MS = 2000;
 
 /**
  * What one `zli benchmark` measured, before throughput is worked out from it.
@@ -35,12 +36,44 @@ const CSV_COLUMNS = ['srcSize', 'compressedSize', 'compressionRatio', 'ctimeMs',
  */
 
 /**
+ * A zli process starting or ending, so the main process can kill any still
+ * running if the worker dies.
+ *
+ * @typedef {object} ZliChildEvent
+ * @property {number} pid
+ * @property {'spawned' | 'exited'} state
+ */
+
+/**
+ * @typedef {object} ZliContext
+ * @property {AbortSignal} [signal] Aborting it stops the running zli and rejects with its reason.
+ * @property {(event: ZliChildEvent) => void} [onChild]
+ */
+
+/**
+ * SIGTERM first, then SIGKILL if zli has not exited. Windows terminates on either.
+ *
+ * @param {import('node:child_process').ChildProcess} child
+ */
+function terminate(child) {
+  child.kill('SIGTERM');
+  const escalate = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
+  // 'exit' rather than 'close', which waits for stdio and need not follow.
+  child.once('exit', () => clearTimeout(escalate));
+}
+
+/**
  * @param {string} zliPath
  * @param {string[]} args
+ * @param {ZliContext} context
  * @returns {Promise<void>}
  */
-function runZli(zliPath, args) {
+function runZli(zliPath, args, {signal, onChild}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
     // --verbose 1 limits stderr to errors, so a failure message can be shown as-is.
     const child = spawn(zliPath, [...args, '--verbose', '1'], {
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -48,6 +81,12 @@ function runZli(zliPath, args) {
     });
     child.stderr.setEncoding('utf8');
     let stderr = '';
+    /**
+     * Why zli was stopped; reported once it has actually exited.
+     *
+     * @type {unknown}
+     */
+    let stopReason;
     let settled = false;
     /** @param {unknown} error */
     const fail = (error) => {
@@ -56,15 +95,38 @@ function runZli(zliPath, args) {
         reject(error);
       }
     };
+    const onAbort = () => {
+      if (stopReason === undefined) {
+        stopReason = signal?.reason;
+        terminate(child);
+      }
+    };
+    signal?.addEventListener('abort', onAbort, {once: true});
+    const cleanup = () => {
+      signal?.removeEventListener('abort', onAbort);
+    };
+    if (child.pid !== undefined) {
+      onChild?.({pid: child.pid, state: 'spawned'});
+    }
+
     child.stderr.on('data', (/** @type {string} */ chunk) => {
       process.stderr.write(chunk);
       stderr += chunk;
     });
     child.once('error', (error) => {
+      cleanup();
       fail(error);
     });
-    child.once('close', (code, signal) => {
+    child.once('close', (code, exitSignal) => {
+      cleanup();
+      if (child.pid !== undefined) {
+        onChild?.({pid: child.pid, state: 'exited'});
+      }
       if (settled) {
+        return;
+      }
+      if (stopReason !== undefined) {
+        fail(stopReason);
         return;
       }
       if (code !== 0) {
@@ -73,7 +135,7 @@ function runZli(zliPath, args) {
           new Error(
             detail !== ''
               ? detail
-              : `zli exited unexpectedly (${signal === null ? `code ${code}` : `signal ${signal}`})`,
+              : `zli exited unexpectedly (${exitSignal === null ? `code ${code}` : `signal ${exitSignal}`})`,
           ),
         );
         return;
@@ -117,19 +179,24 @@ async function readBenchmarkCsv(csvPath) {
  * @param {string[]} compressorArgs
  * @param {OpenZlBenchmarkJob} job
  * @param {string} csvPath
+ * @param {ZliContext} context
  */
-async function benchmark(zliPath, inputPath, compressorArgs, job, csvPath) {
-  await runZli(zliPath, [
-    'benchmark',
-    inputPath,
-    ...compressorArgs,
-    '--level',
-    String(job.level),
-    '--num-iters',
-    String(job.iterations),
-    '--output-csv',
-    csvPath,
-  ]);
+async function benchmark(zliPath, inputPath, compressorArgs, job, csvPath, context) {
+  await runZli(
+    zliPath,
+    [
+      'benchmark',
+      inputPath,
+      ...compressorArgs,
+      '--level',
+      String(job.level),
+      '--num-iters',
+      String(job.iterations),
+      '--output-csv',
+      csvPath,
+    ],
+    context,
+  );
   return readBenchmarkCsv(csvPath);
 }
 
@@ -139,22 +206,27 @@ async function benchmark(zliPath, inputPath, compressorArgs, job, csvPath) {
  * @param {OpenZlBenchmarkJob} job
  * @param {number} candidates
  * @param {string} outputDirectory
+ * @param {ZliContext} context
  */
-async function trainedCandidatePaths(zliPath, inputPath, job, candidates, outputDirectory) {
-  await runZli(zliPath, [
-    'train',
-    inputPath,
-    '--profile',
-    job.profile,
-    '--output',
-    outputDirectory,
-    '--pareto-frontier',
-    '--max-num-candidates',
-    String(candidates),
-    '--threads',
-    String(TRAINING_THREADS),
-    '--use-all-samples',
-  ]);
+async function trainedCandidatePaths(zliPath, inputPath, job, candidates, outputDirectory, context) {
+  await runZli(
+    zliPath,
+    [
+      'train',
+      inputPath,
+      '--profile',
+      job.profile,
+      '--output',
+      outputDirectory,
+      '--pareto-frontier',
+      '--max-num-candidates',
+      String(candidates),
+      '--threads',
+      String(TRAINING_THREADS),
+      '--use-all-samples',
+    ],
+    context,
+  );
   // zli train --pareto-frontier writes candidate i to <output>/<i>.zc.
   const indices = (await fs.readdir(outputDirectory))
     .flatMap((name) => /^(\d+)\.zc$/.exec(name)?.[1] ?? [])
@@ -188,22 +260,26 @@ async function removeScratch(directory) {
  * --level, so each candidate is benchmarked again with the job's settings. As
  * in the browser, a candidate that cannot be benchmarked is yielded as an error
  * and its siblings are still measured; anything else, training included,
- * throws. zli reads `inputPath` where it is; only its CSV and candidate files go
- * in a scratch directory.
+ * throws, and so does cancelling, which stops the running zli. zli reads
+ * `inputPath` where it is; only its CSV and candidate files go in a scratch
+ * directory under `tempRoot`, which defaults to the OS temp directory.
  *
  * @param {string} zliPath
  * @param {string} inputPath
  * @param {OpenZlBenchmarkJob} job
+ * @param {ZliContext & {tempRoot?: string}} [options]
  * @returns {AsyncGenerator<OpenZLOutcome>}
  */
-async function* measureOpenZL(zliPath, inputPath, job) {
+async function* measureOpenZL(zliPath, inputPath, job, {signal, onChild, tempRoot = os.tmpdir()} = {}) {
+  const context = {signal, onChild};
   // Absolute paths never start with '-', so zli cannot parse them as flags.
   const input = path.resolve(inputPath);
-  const workDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'openzl-playground-'));
+  const workDirectory = await fs.mkdtemp(path.join(tempRoot, 'openzl-playground-'));
   try {
     if (job.training === null) {
       const csvPath = path.join(workDirectory, 'benchmark.csv');
-      yield {candidate: null, measurement: await benchmark(zliPath, input, ['--profile', job.profile], job, csvPath)};
+      const args = ['--profile', job.profile];
+      yield {candidate: null, measurement: await benchmark(zliPath, input, args, job, csvPath, context)};
       return;
     }
     const candidatePaths = await trainedCandidatePaths(
@@ -212,14 +288,19 @@ async function* measureOpenZL(zliPath, inputPath, job) {
       job,
       job.training.candidates,
       path.join(workDirectory, 'candidates'),
+      context,
     );
     for (const [index, candidatePath] of candidatePaths.entries()) {
       const candidate = {index: index + 1, total: candidatePaths.length};
       const csvPath = path.join(workDirectory, `candidate-${index}.csv`);
       let measurement;
       try {
-        measurement = await benchmark(zliPath, input, ['--compressor', candidatePath], job, csvPath);
+        measurement = await benchmark(zliPath, input, ['--compressor', candidatePath], job, csvPath, context);
       } catch (error) {
+        // A cancel is not this candidate failing: it ends the job.
+        if (signal?.aborted) {
+          throw error;
+        }
         yield {candidate, error};
         continue;
       }
