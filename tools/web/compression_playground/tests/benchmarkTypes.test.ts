@@ -2,7 +2,7 @@
 
 import {describe, expect, it} from 'vitest';
 import {buildJobs, isRunInProgress, toCompressorConfig, type RunConfig, type RunState} from '../src/benchmarkTypes.ts';
-import {createCompressorRow} from '../src/compressors.ts';
+import {createCompressorRow, DEFAULT_TRAINED_CANDIDATES} from '../src/compressors.ts';
 
 const FILE = new File(['x'], 'sample.bin');
 const runWith = (compressors: RunConfig['compressors'], iterations = 5): RunConfig => ({
@@ -35,7 +35,7 @@ describe('toCompressorConfig', () => {
     row.trainRequested = true;
 
     const config = toCompressorConfig(row);
-    expect(config).toMatchObject({training: {paretoFrontier: true, candidates: 6}});
+    expect(config).toMatchObject({training: {paretoFrontier: true, candidates: DEFAULT_TRAINED_CANDIDATES}});
     expect(buildJobs(runWith([config])).jobs).toEqual([
       expect.objectContaining({profile: 'fixed_profile', training: null}),
     ]);

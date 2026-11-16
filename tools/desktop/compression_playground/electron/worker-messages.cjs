@@ -23,7 +23,12 @@ const trainingSchema = z.object({paretoFrontier: z.literal(true), candidates: z.
 const jobBase = {id: z.string(), rowId: z.int(), level: z.int(), iterations: z.int().min(1)};
 
 const jobSchema = z.discriminatedUnion('compressor', [
-  z.object({...jobBase, compressor: z.literal('OpenZL'), profile: z.string(), training: trainingSchema}),
+  z.object({
+    ...jobBase,
+    compressor: z.literal('OpenZL'),
+    profile: z.string(),
+    training: trainingSchema,
+  }),
   z.object({...jobBase, compressor: z.literal('zstd')}),
   z.object({...jobBase, compressor: z.literal('gzip')}),
 ]);

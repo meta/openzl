@@ -37,8 +37,8 @@ import {
   tickLabelLeft,
   type CompressorName,
   type CompressorRow,
-  type OpenZlProfile,
   type GzipRow,
+  type OpenZlProfile,
   type OpenZlRow,
   type ZstdRow,
 } from '../compressors.ts';
@@ -53,6 +53,8 @@ interface CompressorRowProps {
   onPatch: PatchRow;
   onCompressorChange: (id: number, compressor: CompressorName) => void;
   onRemove: (id: number) => void;
+  candidateCounts: readonly number[];
+  unavailableHeading: string;
 }
 
 interface OpenZlRowProps {
@@ -66,9 +68,20 @@ interface ConfigureRunCardProps {
   compressors: CompressorRows;
   iterations: number;
   onIterationsChange: (iterations: number) => void;
+  /** The candidate counts a trained row can pick; the browser trainer's own window unless the backend says otherwise. */
+  candidateCounts?: readonly number[];
+  /** What the picker says of a profile this build cannot run. */
+  unavailableHeading?: string;
+  /** Where the profiles come from: the WASM worker unless the desktop app supplies its own. */
+  loadProfiles?: () => Promise<unknown>;
 }
 
-function OpenZlOptions({row, position, onPatch}: OpenZlRowProps) {
+function OpenZlOptions({
+  row,
+  position,
+  onPatch,
+  candidateCounts,
+}: OpenZlRowProps & {candidateCounts: readonly number[]}) {
   const helperTooltip = useSlotRecipe({key: 'helperTooltip'})();
   // A backstop for rows that arrive from elsewhere: the picker already refuses
   // pytorch, which the browser cannot run at all.
@@ -182,7 +195,7 @@ function OpenZlOptions({row, position, onPatch}: OpenZlRowProps) {
                     borderRadius="6px"
                     value={row.candidates}
                     onChange={(event) => onPatch(row.id, row.compressor, {candidates: Number(event.target.value)})}>
-                    {TRAINED_CANDIDATE_COUNTS.map((count) => (
+                    {candidateCounts.map((count) => (
                       <option key={count} value={count}>
                         {count}
                       </option>
@@ -223,11 +236,11 @@ function OpenZlOptions({row, position, onPatch}: OpenZlRowProps) {
  * Ids for the tool tip text description. Scoped per row because ids must be unique
  * and every row renders its own listbox.
  */
-function profileDescriptionId(rowId: number, profile: OpenZlProfile): string {
+function profileDescriptionId(rowId: number, profile: string): string {
   return `row-${rowId}-profile-${profile}-description`;
 }
 
-function ProfileSelect({row, position, onPatch}: OpenZlRowProps) {
+function ProfileSelect({row, position, onPatch, unavailableHeading}: OpenZlRowProps & {unavailableHeading: string}) {
   const helperTooltip = useSlotRecipe({key: 'helperTooltip'})();
   const triggerId = `row-${row.id}-profile-trigger`;
   const profiles = getOpenZlProfiles();
@@ -273,7 +286,7 @@ function ProfileSelect({row, position, onPatch}: OpenZlRowProps) {
         if (next != null) {
           // buildJobs checks training capability, preserve trainRequested so
           // switching back to a trainable profile restores the user's setting.
-          onPatch(row.id, row.compressor, {profile: next as OpenZlProfile});
+          onPatch(row.id, row.compressor, {profile: next});
         }
       }}>
       <Select.Label srOnly>Profile for row {position}</Select.Label>
@@ -321,7 +334,7 @@ function ProfileSelect({row, position, onPatch}: OpenZlRowProps) {
                   fontSize="11px"
                   fontWeight="semibold"
                   textTransform="uppercase">
-                  Not available in the browser
+                  {unavailableHeading}
                 </Box>
               )}
               <Select.Item
@@ -509,6 +522,8 @@ function CompressorRowCard({
   onPatch,
   onCompressorChange,
   onRemove,
+  candidateCounts,
+  unavailableHeading,
 }: CompressorRowProps) {
   const helperTooltip = useSlotRecipe({key: 'helperTooltip'})();
   const triggerId = `row-${row.id}-compressor`;
@@ -614,7 +629,7 @@ function CompressorRowCard({
             {row.compressor === 'OpenZL' ? 'PROFILE' : 'LEVEL'}
           </Text>
           {row.compressor === 'OpenZL' ? (
-            <ProfileSelect row={row} position={position} onPatch={onPatch} />
+            <ProfileSelect row={row} position={position} onPatch={onPatch} unavailableHeading={unavailableHeading} />
           ) : (
             <LevelsPicker row={row} position={position} onPatch={onPatch} />
           )}
@@ -640,7 +655,9 @@ function CompressorRowCard({
         </Text>
       )}
 
-      {row.compressor === 'OpenZL' && <OpenZlOptions row={row} position={position} onPatch={onPatch} />}
+      {row.compressor === 'OpenZL' && (
+        <OpenZlOptions row={row} position={position} onPatch={onPatch} candidateCounts={candidateCounts} />
+      )}
     </Box>
   );
 }
@@ -650,11 +667,14 @@ export default function ConfigureRunCard({
   iterations,
   onIterationsChange,
   onProfilesReady,
+  candidateCounts = TRAINED_CANDIDATE_COUNTS,
+  unavailableHeading = 'Not available in the browser',
+  loadProfiles = getBenchmarkProfiles,
 }: ConfigureRunCardProps) {
   const [profileStatus, setProfileStatus] = useState<'loading' | 'ready' | Error>('loading');
   useEffect(() => {
     let active = true;
-    getBenchmarkProfiles()
+    loadProfiles()
       .then(() => {
         if (active) {
           setProfileStatus('ready');
@@ -667,7 +687,7 @@ export default function ConfigureRunCard({
     return () => {
       active = false;
     };
-  }, [onProfilesReady]);
+  }, [loadProfiles, onProfilesReady]);
   return (
     <StepCard number={2} title="Configure the run" subtitle="Select which compressors to compare">
       <VStack gap="10px" align="stretch" aria-busy={profileStatus === 'loading'}>
@@ -684,6 +704,8 @@ export default function ConfigureRunCard({
             onPatch={patchRow}
             onCompressorChange={changeCompressor}
             onRemove={removeRow}
+            candidateCounts={candidateCounts}
+            unavailableHeading={unavailableHeading}
           />
         ))}
       </VStack>

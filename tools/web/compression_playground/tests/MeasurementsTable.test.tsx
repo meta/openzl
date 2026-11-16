@@ -241,6 +241,13 @@ describe('ResultsPanel', () => {
     expect(screen.queryByRole('heading', {name: 'How it works'})).not.toBeInTheDocument();
   });
 
+  it('does not say the speeds are WebAssembly ones in the desktop app, which measures natively', () => {
+    renderWithPlaygroundTheme(<ResultsPanel runState={completed(TWO_ZSTD_LEVELS)} showWasmNotice={false} />);
+
+    expect(screen.getByRole('table', {name: 'Measurements'})).toBeInTheDocument();
+    expect(screen.queryByText(/WebAssembly/)).not.toBeInTheDocument();
+  });
+
   it('keeps the empty state when every job failed, and says which', () => {
     renderWithPlaygroundTheme(
       <ResultsPanel

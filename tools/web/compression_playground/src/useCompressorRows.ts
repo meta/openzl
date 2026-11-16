@@ -3,8 +3,8 @@
 import {useRef, useState} from 'react';
 import {createCompressorRow, type CompressorName, type CompressorRow} from './compressors.ts';
 
-function defaultRows(): readonly CompressorRow[] {
-  return [createCompressorRow(1, 'OpenZL'), createCompressorRow(2, 'zstd'), createCompressorRow(3, 'gzip')];
+function defaultRows(candidates?: number): readonly CompressorRow[] {
+  return [createCompressorRow(1, 'OpenZL', candidates), createCompressorRow(2, 'zstd'), createCompressorRow(3, 'gzip')];
 }
 
 /**
@@ -43,8 +43,11 @@ export interface CompressorRows {
  * finished measurement to whatever row took its place. The counter therefore
  * starts above the highest id it was seeded with and only ever climbs.
  */
-export function useCompressorRows(initialRows?: readonly CompressorRow[]): CompressorRows {
-  const [rows, setRows] = useState<readonly CompressorRow[]>(() => initialRows ?? defaultRows());
+export function useCompressorRows({
+  initialRows,
+  defaultCandidates,
+}: {initialRows?: readonly CompressorRow[]; defaultCandidates?: number} = {}): CompressorRows {
+  const [rows, setRows] = useState<readonly CompressorRow[]>(() => initialRows ?? defaultRows(defaultCandidates));
   // Seeded with 0 because `Math.max()` over an empty list is -Infinity.
   const nextId = useRef(Math.max(0, ...rows.map((row) => row.id)) + 1);
 
@@ -53,7 +56,7 @@ export function useCompressorRows(initialRows?: readonly CompressorRow[]): Compr
     addRow: () => {
       const id = nextId.current;
       nextId.current += 1;
-      setRows((current) => [...current, createCompressorRow(id, 'OpenZL')]);
+      setRows((current) => [...current, createCompressorRow(id, 'OpenZL', defaultCandidates)]);
     },
     removeRow: (id: number) => {
       setRows((current) => current.filter((row) => row.id !== id));
@@ -72,7 +75,7 @@ export function useCompressorRows(initialRows?: readonly CompressorRow[]): Compr
         if (compressor !== 'OpenZL' && current.some((row) => row.id !== id && row.compressor === compressor)) {
           return current;
         }
-        return current.map((row) => (row.id === id ? createCompressorRow(id, compressor) : row));
+        return current.map((row) => (row.id === id ? createCompressorRow(id, compressor, defaultCandidates) : row));
       });
     },
   };

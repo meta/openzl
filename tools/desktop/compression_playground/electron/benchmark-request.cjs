@@ -2,7 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 
-/** @import {DesktopRunConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts' */
+/** @import {DesktopRunConfig} from '../../../web/compression_playground/src/desktop.ts' */
 
 'use strict';
 
@@ -57,14 +57,20 @@ const requestSchema = z.object(
   {
     iterations: z.int({error: ITERATIONS}).min(1, ITERATIONS),
     compressors: z.array(compressorSchema, {error: 'Invalid compressor list'}),
-    input: z.object(
-      {
-        path: z
-          .string({error: INVALID_PATH})
-          .min(1, INVALID_PATH)
-          .refine((path) => !path.includes('\0'), INVALID_PATH),
-      },
-      {error: 'Benchmark input is missing'},
+    // The bundled sample, whose path the main process supplies so the page
+    // never has to know it, or a file on disk. The sample is tried first, so a
+    // request naming it is never read as a path it happens to carry too.
+    input: z.union(
+      [
+        z.object({kind: z.literal('bundled-sample'), name: z.string(), size: z.number()}),
+        z.object({
+          path: z
+            .string({error: INVALID_PATH})
+            .min(1, INVALID_PATH)
+            .refine((path) => !path.includes('\0'), INVALID_PATH),
+        }),
+      ],
+      {error: 'Benchmark input must be a file path or the bundled sample'},
     ),
   },
   {error: 'Invalid benchmark request'},

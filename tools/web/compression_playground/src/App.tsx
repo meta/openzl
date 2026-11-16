@@ -1,16 +1,15 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import {useCallback, useEffect, useRef, useState} from 'react';
-import {Box, Flex} from '@chakra-ui/react';
+import {Box, Flex, Text} from '@chakra-ui/react';
 import {ToolHeader} from '@openzl/web-common';
 import ResultsPanel from './components/ResultsPanel.tsx';
 import SetupColumn from './components/SetupColumn.tsx';
 import UnsupportedBrowser from './components/UnsupportedBrowser.tsx';
+import {isDesktop, loadDesktopBackend, webBackend, type Backend} from './backend.ts';
 import {toCompressorConfig, type CompressorConfig, type RunConfig, type RunState} from './benchmarkTypes.ts';
 import {ITERATIONS_DEFAULT} from './compressors.ts';
 import {detectEngineSupport, engineBlocker, isolationSettled} from './engineSupport.ts';
-import {fetchSample} from './fetchSample.ts';
-import {runBenchmark} from './runBenchmark.ts';
 import {useCompressorRows} from './useCompressorRows.ts';
 import logoUrl from '/OpenZL_logo.png?url';
 
@@ -82,11 +81,24 @@ function runBlockersFor(file: File | null, compressors: readonly CompressorConfi
 }
 
 export default function App() {
+  // The desktop app measures with `zli` instead of the WASM worker. Both feed
+  // the same `RunState`, so the page is chosen once here and never asks again.
+  // The browser's backend is there at once; the desktop app's code is loaded,
+  // so the website never has it.
+  const [backend, setBackend] = useState<Backend | null>(() => (isDesktop() ? null : webBackend));
+  const [backendError, setBackendError] = useState<string | null>(null);
+  useEffect(() => {
+    if (backend === null) {
+      loadDesktopBackend().then(setBackend, (error: unknown) => {
+        setBackendError(error instanceof Error ? error.message : String(error));
+      });
+    }
+  }, [backend]);
   // Lazy initializer rather than a call in the body: nothing detection reports
   // can change while the page is open, so it should run once per mount rather
   // than once per render.
   const [support] = useState(detectEngineSupport);
-  const blocker = engineBlocker(support);
+  const blocker = backend === null || backend.settings.checkEngineSupport === false ? null : engineBlocker(support);
   const [settled, setSettled] = useState(false);
   useEffect(() => {
     void isolationSettled().then(() => {
@@ -101,12 +113,16 @@ export default function App() {
 
   return (
     <Flex direction="column" minH="100vh" bg="pg.pageBg">
-      <ToolHeader title="Compression Playground" logoSrc={logoUrl} />
+      <ToolHeader title="Compression Playground" logoSrc={logoUrl} {...backend?.settings.headerLinks} />
       {/* The header stays up on the unsupported path. It is the site
           navigation, and it is the only way off this screen. */}
       <Flex as="main" flex="1" direction="column" align="center" bg="pg.pageBg">
-        {awaitingIsolation ? null : blocker === null ? (
-          <Playground />
+        {backendError !== null ? (
+          <Box width="100%" maxW={MESSAGE_MAX_WIDTH} px="32px" pt="32px">
+            <Text role="alert">Unable to start the playground: {backendError}</Text>
+          </Box>
+        ) : backend === null || awaitingIsolation ? null : blocker === null ? (
+          <Playground backend={backend} />
         ) : (
           <Box width="100%" maxW={MESSAGE_MAX_WIDTH} px="32px" pt={{base: '32px', md: '96px'}} pb="40px">
             <UnsupportedBrowser blocker={blocker} />
@@ -118,14 +134,17 @@ export default function App() {
 }
 
 /** Owns the run setup, so none of it exists on the blocked path, where nothing could use it. */
-function Playground() {
+function Playground({backend}: {backend: Backend}) {
   const [file, setFile] = useState<File | null>(null);
-  const compressors = useCompressorRows();
+  const compressors = useCompressorRows({defaultCandidates: backend.settings.defaultCandidates});
   const [iterations, setIterations] = useState(ITERATIONS_DEFAULT);
   const [runState, setRunState] = useState<RunState>({status: 'idle'});
-  const onRun = useCallback((config: RunConfig) => {
-    runBenchmark(config, setRunState);
-  }, []);
+  const onRun = useCallback(
+    (config: RunConfig) => {
+      backend.run(config, setRunState);
+    },
+    [backend],
+  );
   const compressorConfigs = compressors.rows.map(toCompressorConfig);
   const configBlockers = configBlockersFor(compressorConfigs);
   const runBlockers = runBlockersFor(file, compressorConfigs);
@@ -138,7 +157,7 @@ function Playground() {
           iterations,
         };
   // The rows and iterations as last rendered. They stay editable while the
-  // sample downloads, so the run reads them when it starts, not at the press.
+  // sample loads, so the run reads them when it starts, not at the press.
   const liveSetup = useRef({compressors: compressorConfigs, iterations});
   useEffect(() => {
     liveSetup.current = {compressors: compressorConfigs, iterations};
@@ -151,18 +170,18 @@ function Playground() {
       : () => {
           // `loading` from the press rather than from when the run starts, so
           // both buttons and the file picker stay disabled while the sample
-          // downloads.
+          // loads.
           setRunState({status: 'loading'});
-          fetchSample().then(
-            (sample) => {
-              // A row emptied during the download holds the run back, as it
+          backend.loadSample().then(
+            (runSample) => {
+              // A row emptied during the load holds the run back, as it
               // would Run, which then says why.
               const setup = liveSetup.current;
               if (configBlockersFor(setup.compressors).length > 0) {
                 setRunState({status: 'idle'});
                 return;
               }
-              onRun({input: sample, ...setup});
+              runSample(setup, setRunState);
             },
             (error: unknown) => {
               const message = error instanceof Error ? error.message : String(error);
@@ -193,8 +212,10 @@ function Playground() {
         onRun={onRun}
         onTrySample={onTrySample}
         runBlockers={runBlockers}
+        settings={backend.settings}
+        loadProfiles={backend.loadProfiles}
       />
-      <ResultsPanel runState={runState} />
+      <ResultsPanel runState={runState} showWasmNotice={backend.settings.showWasmNotice} />
     </Flex>
   );
 }
