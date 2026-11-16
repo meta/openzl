@@ -72,6 +72,14 @@ require('node:fs').writeFileSync(require('node:path').join(__dirname, 'ready'), 
 setInterval(() => {}, 1000);
 `;
 
+/** Stands in for a zli whose benchmark CSV is `csv`. */
+export function csvZli(csv: string): string {
+  return `
+const args = process.argv.slice(2);
+require('node:fs').writeFileSync(args[args.indexOf('--output-csv') + 1], ${JSON.stringify(csv)});
+`;
+}
+
 /** An OpenZL job at level 6 and 4 iterations, untrained unless `training` says otherwise. */
 export function openZLJob(training: TrainingConfig | null = null): OpenZlBenchmarkJob {
   return {id: '1-OpenZL-6', rowId: 1, level: 6, iterations: 4, compressor: 'OpenZL', profile: 'serial', training};

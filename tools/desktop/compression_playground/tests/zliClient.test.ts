@@ -8,7 +8,15 @@ import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {measureOpenZL, type ZliChildEvent} from '../electron/zli-client.cjs';
-import {fakeZli, HANGING_ZLI, inputFile, openZLJob, removeFakeZlis, UNORDERED_CANDIDATES_ZLI} from './fakeZli.ts';
+import {
+  csvZli,
+  fakeZli,
+  HANGING_ZLI,
+  inputFile,
+  openZLJob,
+  removeFakeZlis,
+  UNORDERED_CANDIDATES_ZLI,
+} from './fakeZli.ts';
 
 const TRAINED = {paretoFrontier: true, candidates: 10} as const;
 const MEASUREMENT = {iterations: 4, srcSize: 3, compressMs: 1, decompressMs: 1};
@@ -43,6 +51,24 @@ describe('measureOpenZL', () => {
     const outcomes = await collect(measureOpenZL(fakeZli(), inputFile(), openZLJob()));
 
     expect(outcomes).toEqual([{candidate: null, measurement: {...MEASUREMENT, compressedSize: 2}}]);
+  });
+
+  it('rejects a benchmark CSV that breaks its format, naming the field', async () => {
+    const cases: [string, string][] = [
+      ['srcSize,compressedSize,compressionRatio,ctimeMs,dtimeMs,iters,path\nthree,2,1.5,1,1,1,in\n', '(srcSize:'],
+      ['srcSize,compressedSize,compressionRatio,ctimeMs,dtimeMs,iters,path\n3,2,1.5,Infinity,1,1,in\n', '(ctimeMs:'],
+      ['srcSize,compressedSize,compressionRatio,dtimeMs,iters\n3,2,1.5,1,1\n', '(ctimeMs:'],
+      // Read by name, so a repeated column would silently replace the first.
+      [
+        'srcSize,compressedSize,compressionRatio,ctimeMs,dtimeMs,iters,srcSize\n3,2,1.5,1,1,1,999\n',
+        '(column srcSize appears twice)',
+      ],
+    ];
+    for (const [csv, expected] of cases) {
+      await expect(collect(measureOpenZL(fakeZli(csvZli(csv)), inputFile(), openZLJob()))).rejects.toThrow(
+        `zli returned an unexpected result ${expected}`,
+      );
+    }
   });
 
   it('has zli read the input where it is, rather than a copy', async () => {
