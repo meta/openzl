@@ -2,7 +2,7 @@
 
 // @vitest-environment node
 
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, rmSync, truncateSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
@@ -54,6 +54,7 @@ describe('planJobs', () => {
         },
         {rowId: 2, compressor: 'zstd', levels: [1, 3]},
       ]),
+      4200,
     );
 
     expect(rejected).toEqual([]);
@@ -73,10 +74,22 @@ describe('planJobs', () => {
   });
 
   it('rejects a row with no levels rather than dropping it', () => {
-    const {jobs, rejected} = planJobs(config([{rowId: 4, compressor: 'gzip', levels: []}]));
+    const {jobs, rejected} = planJobs(config([{rowId: 4, compressor: 'gzip', levels: []}]), 4200);
 
     expect(jobs).toEqual([]);
     expect(rejected).toEqual([{rowId: 4, message: 'No levels selected'}]);
+  });
+
+  it('rejects a gzip row for an input of 2 GiB or more, and keeps the other rows', () => {
+    const rows = config([
+      {rowId: 1, compressor: 'gzip', levels: [1, 6]},
+      {rowId: 2, compressor: 'zstd', levels: [3]},
+    ]);
+
+    expect(planJobs(rows, 2 ** 31 - 1).jobs.map((job) => job.id)).toEqual(['1-gzip-1', '1-gzip-6', '2-zstd-3']);
+    const {jobs, rejected} = planJobs(rows, 2 ** 31);
+    expect(jobs.map((job) => job.id)).toEqual(['2-zstd-3']);
+    expect(rejected).toEqual([{rowId: 1, message: 'gzip can only benchmark an input smaller than 2 GiB'}]);
   });
 });
 
@@ -210,6 +223,32 @@ describe('run', () => {
       ),
     ).rejects.toThrow('Benchmark cancelled');
     expect(messages.map((message) => message.type)).toEqual(['loading', 'started']);
+  });
+
+  it('rejects gzip for an input of 2 GiB or more before any job runs', async () => {
+    const inputPath = inputFile();
+    // Sparse, so the test does not write 2 GiB.
+    truncateSync(inputPath, 2 ** 31);
+    const messages: RunMessage[] = [];
+
+    await run(
+      {
+        zliPath: fakeZli(),
+        zstdBenchmarkPath: zstdBenchmark(),
+        config: config([{rowId: 1, compressor: 'gzip', levels: [5]}], inputPath),
+      },
+      (message) => messages.push(message),
+    );
+
+    expect(messages).toEqual([
+      {type: 'loading'},
+      {
+        type: 'started',
+        totalJobs: 0,
+        rejected: [{rowId: 1, message: 'gzip can only benchmark an input smaller than 2 GiB'}],
+      },
+      {type: 'finished'},
+    ]);
   });
 
   it('measures zstd with zstd-benchmark and derives throughput from its timings', async () => {
