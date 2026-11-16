@@ -3,7 +3,7 @@
 import {chmodSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import type {OpenZlBenchmarkJob, TrainingConfig} from '../../../web/compression_playground/src/benchmarkTypes.ts';
+import type {OpenZlBenchmarkJob, TrainingConfig} from '../../../tools/web/compression_playground/src/benchmarkTypes.ts';
 
 /**
  * Script for a zli stand-in. Training writes the given candidates beside a

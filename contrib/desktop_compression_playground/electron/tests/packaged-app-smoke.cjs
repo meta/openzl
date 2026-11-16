@@ -17,7 +17,7 @@ const path = require('node:path');
 
 const RELEASE = path.resolve(__dirname, '..', '..', 'release');
 // As the page names it, without the path, which only the main process uses.
-const {name, size} = require('../../../../web/compression_playground/src/bundledSample.json');
+const {name, size} = require('../../../../tools/web/compression_playground/src/bundledSample.json');
 const BUNDLED_SAMPLE = {kind: 'bundled-sample', name, size};
 const PRODUCT = 'OpenZL Compression Playground';
 const TIMEOUT_MS = 60_000;

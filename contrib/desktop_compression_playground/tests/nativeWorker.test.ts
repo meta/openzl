@@ -6,7 +6,7 @@ import {mkdtempSync, rmSync, truncateSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
-import type {RunMessage} from '../../../web/compression_playground/src/benchmarkTypes.ts';
+import type {RunMessage} from '../../../tools/web/compression_playground/src/benchmarkTypes.ts';
 import {planJobs, run} from '../electron/native-worker.cjs';
 import {
   FAKE_ZSTD_BENCHMARK,

@@ -5,9 +5,9 @@
 'use strict';
 
 /**
- * @import {DesktopRunConfig} from '../../../web/compression_playground/src/desktop.ts'
+ * @import {DesktopRunConfig} from '../../../tools/web/compression_playground/src/desktop.ts'
  * @import {ResolvedRunConfig, WorkerOutput} from './native-worker.cjs'
- * @import {DesktopProfile} from '../../../web/compression_playground/src/desktop.ts'
+ * @import {DesktopProfile} from '../../../tools/web/compression_playground/src/desktop.ts'
  * @import {ListedProfile} from './zli-client.cjs'
  */
 

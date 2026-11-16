@@ -15,7 +15,7 @@ on:
     branches: [dev]
     paths:
       - 'tools/web/compression_playground/**'
-      - 'tools/desktop/compression_playground/**'
+      - 'contrib/desktop_compression_playground/**'
       - 'tools/web/package.json'
       - 'tools/web/yarn.lock'
       # The renderer's shared components and the workspace's build config.
@@ -35,7 +35,7 @@ on:
     branches: [dev, master, actionsTest]
     paths:
       - 'tools/web/compression_playground/**'
-      - 'tools/desktop/compression_playground/**'
+      - 'contrib/desktop_compression_playground/**'
       - 'tools/web/package.json'
       - 'tools/web/yarn.lock'
       # The renderer's shared components and the workspace's build config.
@@ -69,7 +69,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: tools/desktop/compression_playground
+        working-directory: contrib/desktop_compression_playground
     steps:
       # Windows checks files out with CRLF line endings, which Prettier rejects.
       - run: git config --global core.autocrlf false
@@ -81,7 +81,7 @@ jobs:
           cache: 'yarn'
           cache-dependency-path: |
             tools/web/yarn.lock
-            tools/desktop/compression_playground/yarn.lock
+            contrib/desktop_compression_playground/yarn.lock
       # Nothing here builds or downloads the WASM module, so a desktop renderer
       # that still needed it would fail to build.
       - run: yarn install --frozen-lockfile

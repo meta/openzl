@@ -12,7 +12,7 @@
   "scripts": {
     "setup": "node setup.cjs",
     "dev": "yarn setup && electron electron/main.cjs --dev-server=auto",
-    "build:renderer": "yarn --cwd ../../web/compression_playground tsc -b && yarn --cwd ../../web/compression_playground vite build --base ./ --mode desktop --outDir ../../desktop/compression_playground/dist --emptyOutDir",
+    "build:renderer": "yarn --cwd ../../tools/web/compression_playground tsc -b && yarn --cwd ../../tools/web/compression_playground vite build --base ./ --mode desktop --outDir ../../../contrib/desktop_compression_playground/dist --emptyOutDir",
     "build:native": "node setup.cjs native",
     "build": "yarn setup && yarn build:renderer && electron-builder",
     "package": "yarn setup && yarn build:renderer && electron-builder --dir",
@@ -20,7 +20,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "yarn typecheck && yarn lint && yarn test:unit && yarn test:web && yarn test:smoke",
     "test:unit": "vitest run",
-    "test:web": "yarn --cwd ../../web/compression_playground tsc -b && yarn --cwd ../../web/compression_playground lint && yarn --cwd ../../web/compression_playground test:run",
+    "test:web": "yarn --cwd ../../tools/web/compression_playground tsc -b && yarn --cwd ../../tools/web/compression_playground lint && yarn --cwd ../../tools/web/compression_playground test:run",
     "test:smoke": "node electron/tests/smoke.cjs"
   },
   "dependencies": {
@@ -70,11 +70,11 @@
         ]
       },
       {
-        "from": "../../web/compression_playground/src/bundledSample.json",
+        "from": "../../tools/web/compression_playground/src/bundledSample.json",
         "to": "shared/bundledSample.json"
       },
       {
-        "from": "../../../examples/getting_started/sample_inputs/sra0.bin",
+        "from": "../../examples/getting_started/sample_inputs/sra0.bin",
         "to": "sra0.bin"
       },
       {

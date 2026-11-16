@@ -15,7 +15,7 @@ const zlib = require('node:zlib');
 
 const {SAMPLE_SOURCE_PATH} = require('../sample.cjs');
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
 
 /** 4096 float32s, the one tensor in the model checkpoints below. */
 function tensorBytes() {

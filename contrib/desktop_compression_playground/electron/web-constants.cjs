@@ -21,7 +21,7 @@ function webConstants(name) {
   return require(
     packaged !== undefined && fs.existsSync(packaged)
       ? packaged
-      : path.join(__dirname, '..', '..', '..', 'web', 'compression_playground', 'src', name),
+      : path.join(__dirname, '..', '..', '..', 'tools', 'web', 'compression_playground', 'src', name),
   );
 }
 
