@@ -1,8 +1,11 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
+import {useMemo} from 'react';
 import {Box, Text, useToken} from '@chakra-ui/react';
 import {
   CartesianGrid,
+  DefaultZIndexes,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Scatter,
@@ -41,7 +44,11 @@ function useChartColors() {
     'pg.faint',
     'pg.surface',
   ]);
-  return {codec: {OpenZL: openzl, zstd, gzip} satisfies Record<CompressorName, string>, line, label, surface};
+  const codec = useMemo(
+    () => ({OpenZL: openzl, zstd, gzip}) satisfies Record<CompressorName, string>,
+    [openzl, zstd, gzip],
+  );
+  return {codec, line, label, surface};
 }
 
 function PointTooltip({active, payload}: {active?: boolean; payload?: {payload: ChartPoint}[]}) {
@@ -77,31 +84,35 @@ function findPoint(
 
 /**
  * The plot itself, and the only part of the charts that needs recharts.
- * `highlighted` is the `measurementKey` of the table row under the pointer.
- * `hidden` holds the codecs switched off in the legend.
+ * `highlighted` is the `measurementKey` of the table row or chart point under
+ * the pointer. `onHighlight` hears the key of the point under the pointer, or
+ * null once it leaves. `hidden` holds the codecs switched off in the legend.
  */
 export default function ScatterPlot({
   results,
   axis,
   highlighted,
+  onHighlight,
   hidden,
 }: {
   results: readonly JobResult[];
   axis: SpeedAxis;
   highlighted: string | null;
+  onHighlight?: (key: string | null) => void;
   hidden: ReadonlySet<CompressorName>;
 }) {
   const {codec, line, label, surface} = useChartColors();
-  const tickStyle = {fill: label, fontSize: 11};
-  const shown = results.filter((result) => !hidden.has(result.job.compressor));
-  const series = buildSeries(shown, axis);
-  const xDomain = logDomain(shown.map((result) => result[axis]));
-  const yDomain = logDomain(shown.map((result) => result.ratio));
-  const spot = findPoint(series, highlighted);
-
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <ScatterChart margin={{top: 8, right: 12, bottom: 4, left: 0}}>
+  // recharts remounts a series' points whenever the series renders again, and
+  // a point swapped out under the pointer never hears it leave. A highlight
+  // only adds to what is drawn, so the series do not render again for one.
+  const {series, layers} = useMemo(() => {
+    const tickStyle = {fill: label, fontSize: 11};
+    const shown = results.filter((result) => !hidden.has(result.job.compressor));
+    const series = buildSeries(shown, axis);
+    const xDomain = logDomain(shown.map((result) => result[axis]));
+    const yDomain = logDomain(shown.map((result) => result.ratio));
+    const layers = (
+      <>
         <CartesianGrid stroke={line} strokeDasharray="3 3" />
         <XAxis
           type="number"
@@ -132,18 +143,33 @@ export default function ScatterPlot({
             data={[...one.points]}
             fill={codec[one.compressor]}
             line={one.points.length > 1 ? {stroke: codec[one.compressor], strokeWidth: 1.5} : false}
+            onMouseEnter={(item) => onHighlight?.((item.payload as ChartPoint).key)}
+            onMouseLeave={() => onHighlight?.(null)}
           />
         ))}
+      </>
+    );
+    return {series, layers};
+  }, [results, axis, hidden, onHighlight, codec, line, label]);
+  const spot = findPoint(series, highlighted);
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ScatterChart margin={{top: 8, right: 12, bottom: 4, left: 0}}>
+        {layers}
         {spot !== null && <ReferenceLine x={spot.point.x} strokeDasharray="3 3" />}
         {spot !== null && <ReferenceLine y={spot.point.y} strokeDasharray="3 3" />}
         {/* Drawn again on top of every series, so a point under its neighbours
-            still shows. The ring is the card's colour, to part it from them. */}
+            still shows. The ring is the card's colour, to part it from them.
+            A reference dot, unlike another series, leaves the others' points
+            alone, and it lets the pointer through to the point beneath, which
+            would otherwise hear a leave as soon as the ring covers it. */}
         {spot !== null && (
-          <Scatter
-            data={[spot.point]}
-            isAnimationActive={false}
-            legendType="none"
-            shape={({cx, cy}: {cx?: number; cy?: number}) => (
+          <ReferenceDot
+            x={spot.point.x}
+            y={spot.point.y}
+            zIndex={DefaultZIndexes.scatter + 1}
+            shape={({cx, cy}) => (
               <circle
                 className="highlighted-point"
                 cx={cx}
@@ -152,6 +178,7 @@ export default function ScatterPlot({
                 fill={codec[spot.compressor]}
                 stroke={surface}
                 strokeWidth={2.5}
+                pointerEvents="none"
               />
             )}
           />

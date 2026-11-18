@@ -267,6 +267,61 @@ describe('RatioSpeedCharts', () => {
     expect(container.querySelectorAll('.highlighted-point')).toHaveLength(0);
   });
 
+  it('picks out a point hovered on one chart on both, until the pointer leaves it', async () => {
+    const results = [
+      result({compressor: 'zstd', id: 'z1', level: 1}, {ratio: 3, compressMBps: 500}),
+      result({compressor: 'gzip', id: 'g6', level: 6}, {ratio: 5, compressMBps: 50}),
+    ];
+    const {container} = render(
+      <ChakraProvider value={playgroundSystem}>
+        <ResultsPanel runState={{status: 'completed', results, failures: []}} />
+      </ChakraProvider>,
+    );
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol').length).toBeGreaterThan(0);
+    });
+    const gzipSymbols = [...container.querySelectorAll('.recharts-scatter-symbol')].filter((node) =>
+      node.querySelector('path')?.getAttribute('fill')?.includes('gzip'),
+    );
+    // One on each chart; the second is on the decompression one.
+    expect(gzipSymbols).toHaveLength(2);
+    const gzipFill = gzipSymbols[0].querySelector('path')?.getAttribute('fill');
+
+    fireEvent.mouseEnter(gzipSymbols[1]);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.highlighted-point')).toHaveLength(2);
+    });
+    const rings = [...container.querySelectorAll('.highlighted-point')];
+    expect(rings.map((ring) => ring.getAttribute('fill'))).toEqual([gzipFill, gzipFill]);
+    // The ring lies over the hovered point, so it must not take the pointer from it.
+    expect(rings.map((ring) => ring.getAttribute('pointer-events'))).toEqual(['none', 'none']);
+    // Drawn over the series, and without swapping out the point under the pointer.
+    expect(gzipSymbols[1].compareDocumentPosition(rings[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(gzipSymbols[1]).toBeInTheDocument();
+
+    fireEvent.mouseLeave(gzipSymbols[1]);
+    expect(container.querySelectorAll('.highlighted-point')).toHaveLength(0);
+  });
+
+  it('takes no highlight from a chart point while a run is in progress', async () => {
+    const results = [
+      result({compressor: 'zstd', id: 'z1', level: 1}, {ratio: 3, compressMBps: 500}),
+      result({compressor: 'gzip', id: 'g6', level: 6}, {ratio: 5, compressMBps: 50}),
+    ];
+    const running = {status: 'running', completedJobs: 2, totalJobs: 3, results, failures: [], step: null} as const;
+    const {container} = render(
+      <ChakraProvider value={playgroundSystem}>
+        <ResultsPanel runState={running} />
+      </ChakraProvider>,
+    );
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol').length).toBeGreaterThan(0);
+    });
+
+    fireEvent.mouseEnter(container.querySelectorAll('.recharts-scatter-symbol')[0]);
+    expect(container.querySelectorAll('.highlighted-point')).toHaveLength(0);
+  });
+
   it('takes no highlight while a run is in progress', async () => {
     // Rows arrive and re-sort under a pointer that has not moved, so the
     // highlight would stay on a row that is no longer under it.
