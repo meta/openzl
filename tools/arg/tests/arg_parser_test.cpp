@@ -190,4 +190,37 @@ TEST(ArgParserTest, EqualsWithEmptyValueThrows)
             ParseException);
 }
 
+// Test that arguments after -- are positionals, even when they are spelled
+// like a subcommand
+TEST(ArgParserTest, SubcommandNameAfterEndOfOptionsIsPositional)
+{
+    ArgParser parser;
+    parser.addCommand(1, "test", 't');
+    parser.addCommandPositional(1, "input", "Input file path");
+
+    for (const char* name : { "t", "test" }) {
+        const char* argv[] = { "prog", "test", "--", name };
+        auto parsed        = parser.parse(4, const_cast<char**>(argv));
+        parser.validate(parsed);
+
+        EXPECT_EQ(parsed.chosenCmd(), 1);
+        EXPECT_EQ(parsed.cmdPositional(1, "input"), name);
+    }
+}
+
+// Test that -- does not prevent choosing the subcommand
+TEST(ArgParserTest, SubcommandAfterEndOfOptions)
+{
+    ArgParser parser;
+    parser.addCommand(1, "test", 't');
+    parser.addCommandPositional(1, "input", "Input file path");
+
+    const char* argv[] = { "prog", "--", "test", "file" };
+    auto parsed        = parser.parse(4, const_cast<char**>(argv));
+    parser.validate(parsed);
+
+    EXPECT_EQ(parsed.chosenCmd(), 1);
+    EXPECT_EQ(parsed.cmdPositional(1, "input"), "file");
+}
+
 } // namespace

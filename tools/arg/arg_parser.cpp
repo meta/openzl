@@ -370,13 +370,17 @@ ParsedArgs ArgParser::parse(int argc, char** argv) const
         } else {
         POSITIONAL:
             // positional argument, is either command-specific positional or
-            // subcommand string
+            // subcommand string. After '--', it is always a positional of the
+            // chosen subcommand, even if it is spelled like a subcommand.
+            const bool mayBeSubcommand = !seenEndOfOptions
+                    || parsedArgs.chosenCmd_ == CMD_UNSPECIFIED;
             bool isSubcommand = false;
             for (const auto& command : commands_) {
-                if (command.name == argv[i]
-                    || (command.shortName != 0
-                        && command.shortName == argv[i][0]
-                        && argv[i][1] == 0)) {
+                if (mayBeSubcommand
+                    && (command.name == argv[i]
+                        || (command.shortName != 0
+                            && command.shortName == argv[i][0]
+                            && argv[i][1] == 0))) {
                     if (parsedArgs.chosenCmd_ != CMD_UNSPECIFIED) {
                         std::string err =
                                 "Trying to choose another subcommand '"
