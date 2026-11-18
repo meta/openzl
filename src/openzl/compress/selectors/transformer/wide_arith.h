@@ -29,7 +29,13 @@ typedef struct {
 } TRS_WideI128;
 
 TRS_WideU128 TRS_wide_u128_from_u64(uint64_t x);
-TRS_WideU128 TRS_wide_u128_add_u64(TRS_WideU128 acc, uint64_t x);
+ZL_INLINE TRS_WideU128 TRS_wide_u128_add_u64(TRS_WideU128 acc, uint64_t x)
+{
+    uint64_t const low = acc.lo + x;
+    acc.hi += low < acc.lo;
+    acc.lo = low;
+    return acc;
+}
 TRS_WideU128 TRS_wide_u128_mul_u64(uint64_t lhs, uint64_t rhs);
 /*
  * Shift left by 32 bits. The result must fit in 128 bits, so `x.hi` must not
