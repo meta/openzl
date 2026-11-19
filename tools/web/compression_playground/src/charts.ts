@@ -20,6 +20,7 @@ export interface ChartPoint {
 
 /** Which throughput a chart plots; the ratio is always the other axis. */
 export type SpeedAxis = 'compressMBps' | 'decompressMBps';
+export type ChartScale = 'log' | 'linear';
 
 /**
  * Each OpenZL training job has its own curve. zstd and gzip each have one curve
@@ -140,6 +141,16 @@ function niceStep(rough: number): number {
   const scaled = rough / power;
   const step = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
   return step * power;
+}
+
+/** Linear axes share a zero baseline and leave room above the largest measurement. */
+export function linearDomain(values: readonly number[]): readonly [number, number] {
+  const positive = values.filter(plottable);
+  return [0, positive.length === 0 ? 1 : Math.max(...positive) * 1.1];
+}
+
+export function linearTicks(domain: readonly [number, number]): readonly number[] {
+  return niceTicks(...domain);
 }
 
 /** `1.0k×`, `10k×`, `342×`: the axis has room for four characters, not seven. */

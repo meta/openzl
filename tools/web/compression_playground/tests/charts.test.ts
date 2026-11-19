@@ -1,7 +1,16 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import {describe, expect, it} from 'vitest';
-import {buildSeries, formatRatioTick, formatSpeedTick, logDomain, logTicks, toggleCodec} from '../src/charts.ts';
+import {
+  buildSeries,
+  formatRatioTick,
+  formatSpeedTick,
+  linearDomain,
+  linearTicks,
+  logDomain,
+  logTicks,
+  toggleCodec,
+} from '../src/charts.ts';
 import type {BenchmarkJob, JobResult} from '../src/benchmarkTypes.ts';
 import type {CompressorName} from '../src/compressors.ts';
 
@@ -205,6 +214,27 @@ describe('logTicks', () => {
   it('labels something however narrow the range, without float drift', () => {
     // A step accumulated as a float would land on 5.029999999999999 here.
     expect(logTicks([5.02, 5.04])).toEqual([5.02, 5.03, 5.04]);
+  });
+});
+
+describe('linear axes', () => {
+  it('starts at zero and leaves margin above the largest measurement', () => {
+    expect(linearDomain([100, 500])).toEqual([0, 550]);
+    const [low, high] = linearDomain([42, 42]);
+    expect(low).toBe(0);
+    expect(high).toBeGreaterThan(42);
+  });
+
+  it('ignores invalid measurements and gives an empty chart a finite range', () => {
+    expect(linearDomain([0, -5, Infinity, NaN, 200])).toEqual(linearDomain([200]));
+    expect(linearDomain([])).toEqual([0, 1]);
+    expect(linearDomain([0, -1, Infinity, NaN])).toEqual([0, 1]);
+  });
+
+  it('spaces round-number ticks evenly, including the zero baseline', () => {
+    expect(linearTicks([0, 550])).toEqual([0, 200, 400]);
+    expect(linearTicks([0, 1])).toEqual([0, 0.5, 1]);
+    expect(linearTicks([0, 0.04])).toEqual([0, 0.01, 0.02, 0.03, 0.04]);
   });
 });
 

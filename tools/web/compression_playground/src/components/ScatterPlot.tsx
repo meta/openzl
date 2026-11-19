@@ -17,8 +17,11 @@ import {
   buildSeries,
   formatRatioTick,
   formatSpeedTick,
+  linearDomain,
+  linearTicks,
   logDomain,
   logTicks,
+  type ChartScale,
   type ChartPoint,
   type Series,
   type SpeedAxis,
@@ -85,18 +88,23 @@ export default function ScatterPlot({
   axis,
   highlighted,
   hidden,
+  scale,
 }: {
   results: readonly JobResult[];
   axis: SpeedAxis;
   highlighted: string | null;
   hidden: ReadonlySet<CompressorName>;
+  scale: ChartScale;
 }) {
   const {codec, line, label, surface} = useChartColors();
   const tickStyle = {fill: label, fontSize: 11};
   const shown = results.filter((result) => !hidden.has(result.job.compressor));
   const series = buildSeries(shown, axis);
-  const xDomain = logDomain(shown.map((result) => result[axis]));
-  const yDomain = logDomain(shown.map((result) => result.ratio));
+  const domain = scale === 'log' ? logDomain : linearDomain;
+  const ticks = scale === 'log' ? logTicks : linearTicks;
+  const points = [...series.values()].flatMap((one) => one.points);
+  const xDomain = domain(points.map((point) => point.x));
+  const yDomain = domain(points.map((point) => point.y));
   const spot = findPoint(series, highlighted);
 
   return (
@@ -106,9 +114,9 @@ export default function ScatterPlot({
         <XAxis
           type="number"
           dataKey="x"
-          scale="log"
+          scale={scale}
           domain={[...xDomain]}
-          ticks={[...logTicks(xDomain)]}
+          ticks={[...ticks(xDomain)]}
           tickFormatter={formatSpeedTick}
           tick={tickStyle}
           stroke={line}
@@ -116,9 +124,9 @@ export default function ScatterPlot({
         <YAxis
           type="number"
           dataKey="y"
-          scale="log"
+          scale={scale}
           domain={[...yDomain]}
-          ticks={[...logTicks(yDomain)]}
+          ticks={[...ticks(yDomain)]}
           tickFormatter={formatRatioTick}
           tick={tickStyle}
           stroke={line}
