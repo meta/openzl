@@ -230,7 +230,7 @@ class GeneticAlgorithm {
         size_t maxIterations = 2 * numChildren;
         while (children.size() < numChildren && maxIterations-- > 0) {
             auto child = reproduce();
-            if (populationSet().count(child) == 0) {
+            if (populationSet_.count(child) == 0) {
                 children.insert(std::move(child));
             }
         }
