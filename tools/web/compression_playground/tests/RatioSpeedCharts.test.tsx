@@ -185,6 +185,91 @@ describe('RatioSpeedCharts', () => {
     expect(screen.getAllByText('Compression ratio (log)')).toHaveLength(2);
   });
 
+  it('switches both axes on both charts between log-log and linear spacing', async () => {
+    const results = RESULTS.map((one) => ({...one, decompressMBps: one.compressMBps * 2}));
+    const {container} = await renderPlotted(results);
+    const log = screen.getByRole('button', {name: 'Log-log'});
+    const linear = screen.getByRole('button', {name: 'Linear'});
+    expect(log).toHaveAttribute('aria-pressed', 'true');
+    expect(linear).toHaveAttribute('aria-pressed', 'false');
+
+    function fractions() {
+      return [...container.querySelectorAll('.recharts-surface')].map((chart) => {
+        const positions = [...chart.querySelectorAll('.recharts-scatter-symbol path')].map((point) => {
+          const match = /translate\(([^,]+),\s*([^)]+)\)/.exec(point.getAttribute('transform') ?? '');
+          return [Number(match?.[1]), Number(match?.[2])];
+        });
+        const [first, second, zstd, gzip] = positions;
+        return {
+          x: (gzip[0] - first[0]) / (zstd[0] - first[0]),
+          y: (second[1] - first[1]) / (gzip[1] - first[1]),
+        };
+      });
+    }
+
+    for (const fraction of fractions()) {
+      expect(fraction.x).toBeCloseTo((Math.log(162) - Math.log(38)) / (Math.log(520) - Math.log(38)));
+      expect(fraction.y).toBeCloseTo((Math.log(15235) - Math.log(2763)) / (Math.log(15235) - Math.log(342)));
+    }
+
+    fireEvent.click(linear);
+    expect(linear).toHaveAttribute('aria-pressed', 'true');
+    expect(log).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getAllByText('Compression ratio (linear)')).toHaveLength(2);
+    expect(screen.getByText('Compress MB/s (linear)')).toBeInTheDocument();
+    expect(screen.getByText('Decompress MB/s (linear)')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(8);
+      for (const fraction of fractions()) {
+        expect(fraction.x).toBeCloseTo((162 - 38) / (520 - 38));
+        expect(fraction.y).toBeCloseTo((15235 - 2763) / (15235 - 342));
+      }
+    });
+
+    fireEvent.click(log);
+    expect(screen.getAllByText('Compression ratio (log)')).toHaveLength(2);
+    await waitFor(() => {
+      for (const fraction of fractions()) {
+        expect(fraction.x).toBeCloseTo((Math.log(162) - Math.log(38)) / (Math.log(520) - Math.log(38)));
+        expect(fraction.y).toBeCloseTo((Math.log(15235) - Math.log(2763)) / (Math.log(15235) - Math.log(342)));
+      }
+    });
+  });
+
+  it('keeps codec visibility and highlighted measurements when the scale changes', async () => {
+    const {container} = await renderPlotted(RESULTS, 'trained-1-2');
+    const gzip = screen.getByRole('button', {name: /^gzip/});
+    fireEvent.click(gzip);
+    fireEvent.click(screen.getByRole('button', {name: 'Linear'}));
+    expect(gzip).toHaveAttribute('aria-pressed', 'false');
+    await waitFor(() => {
+      expect(container.querySelectorAll('.highlighted-point')).toHaveLength(2);
+      // Three visible measurements and one highlight per chart.
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(8);
+    });
+    fireEvent.click(gzip);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(10);
+    });
+    fireEvent.click(screen.getByRole('button', {name: 'Log-log'}));
+    expect(gzip).toHaveAttribute('aria-pressed', 'true');
+    expect(container.querySelectorAll('.highlighted-point')).toHaveLength(2);
+  });
+
+  it('retains the all-hidden message in linear mode and restores a single point', async () => {
+    const {container} = await renderPlotted();
+    for (const codec of ['OpenZL', 'zstd', 'gzip']) {
+      fireEvent.click(screen.getByRole('button', {name: new RegExp(`^${codec},`)}));
+    }
+    fireEvent.click(screen.getByRole('button', {name: 'Linear'}));
+    expect(screen.getAllByText('Every codec is hidden. Click one below to show it.')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', {name: /^zstd/}));
+    await waitFor(() => {
+      expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(2);
+    });
+    expect(container.innerHTML).not.toMatch(/\bNaN\b/);
+  });
+
   it('counts each codec once in the legend, however many rows produced it', () => {
     renderCharts();
     expect(within(screen.getByRole('button', {name: /OpenZL/})).getByText('2')).toBeInTheDocument();

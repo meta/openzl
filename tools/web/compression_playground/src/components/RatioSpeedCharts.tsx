@@ -1,10 +1,10 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-import {Suspense, lazy} from 'react';
+import {Suspense, lazy, useState} from 'react';
 import {Box, Heading, Text, VStack, chakra} from '@chakra-ui/react';
 import type {CompressorName} from '../compressors.ts';
 import type {JobResult} from '../benchmarkTypes.ts';
-import {buildSeries, type SpeedAxis} from '../charts.ts';
+import {buildSeries, type ChartScale, type SpeedAxis} from '../charts.ts';
 import {CODEC_COLOR} from '../theme.ts';
 
 /**
@@ -19,13 +19,13 @@ const AXES = [
     axis: 'compressMBps',
     title: 'Compression',
     subtitle: 'Ratio against compression throughput',
-    xLabel: 'Compress MB/s (log)',
+    xLabel: 'Compress MB/s',
   },
   {
     axis: 'decompressMBps',
     title: 'Decompression',
     subtitle: 'Ratio against decompression throughput',
-    xLabel: 'Decompress MB/s (log)',
+    xLabel: 'Decompress MB/s',
   },
 ] as const satisfies readonly {axis: SpeedAxis; title: string; subtitle: string; xLabel: string}[];
 
@@ -35,9 +35,10 @@ interface ChartProps {
   xLabel: string;
   highlighted: string | null;
   hidden: ReadonlySet<CompressorName>;
+  scale: ChartScale;
 }
 
-function Chart({results, axis, xLabel, highlighted, hidden}: ChartProps) {
+function Chart({results, axis, xLabel, highlighted, hidden, scale}: ChartProps) {
   // The plot draws from the same series, so it is what says whether anything
   // is left to draw: a codec with no plottable point has no series to hide.
   const series = [...buildSeries(results, axis).values()];
@@ -51,7 +52,7 @@ function Chart({results, axis, xLabel, highlighted, hidden}: ChartProps) {
         alignSelf="center"
         whiteSpace="nowrap"
         style={{writingMode: 'vertical-rl', transform: 'rotate(180deg)'}}>
-        Compression ratio (log)
+        Compression ratio ({scale})
       </Text>
       <Box flex="1" minW={0}>
         <Box height="200px" width="100%">
@@ -71,12 +72,12 @@ function Chart({results, axis, xLabel, highlighted, hidden}: ChartProps) {
             </Text>
           ) : (
             <Suspense fallback={null}>
-              <ScatterPlot results={results} axis={axis} highlighted={highlighted} hidden={hidden} />
+              <ScatterPlot results={results} axis={axis} highlighted={highlighted} hidden={hidden} scale={scale} />
             </Suspense>
           )}
         </Box>
         <Text fontSize="10px" color="pg.faint" textAlign="center" m={0}>
-          {xLabel}
+          {xLabel} ({scale})
         </Text>
       </Box>
     </Box>
@@ -164,6 +165,7 @@ export default function RatioSpeedCharts({
   hidden: ReadonlySet<CompressorName>;
   onToggle: (compressor: CompressorName) => void;
 }) {
+  const [scale, setScale] = useState<ChartScale>('log');
   if (results.length === 0) {
     return null;
   }
@@ -199,6 +201,40 @@ export default function RatioSpeedCharts({
           of compression ratio and speed. Hover over a point to see details. Click a codec below to hide or show it on
           the charts and in the table.
         </Text>
+        <Box
+          role="group"
+          aria-label="Chart scale"
+          display="flex"
+          alignItems="center"
+          flexWrap="wrap"
+          gap="8px"
+          mt="8px">
+          <Text fontSize="12px" color="pg.secondary" m={0}>
+            Chart scale
+          </Text>
+          {(['log', 'linear'] as const).map((option) => (
+            <chakra.button
+              key={option}
+              type="button"
+              aria-pressed={scale === option}
+              onClick={() => setScale(option)}
+              px="12px"
+              py="6px"
+              borderRadius="6px"
+              borderWidth="1px"
+              borderColor={scale === option ? 'pg.ink' : 'pg.border'}
+              bg={scale === option ? 'pg.chip' : 'transparent'}
+              color="pg.ink"
+              fontSize="12px"
+              fontWeight={scale === option ? 'bold' : 'medium'}
+              fontFamily="inherit"
+              cursor="pointer"
+              _hover={{bg: 'pg.chip'}}
+              _focusVisible={{outline: '2px solid', outlineColor: 'pg.ink', outlineOffset: '2px'}}>
+              {option === 'log' ? 'Log-log' : 'Linear'}
+            </chakra.button>
+          ))}
+        </Box>
       </VStack>
 
       <Box display="flex" flexDirection={{base: 'column', md: 'row'}} gap="16px" alignItems="stretch">
@@ -227,6 +263,7 @@ export default function RatioSpeedCharts({
                 xLabel={chart.xLabel}
                 highlighted={highlighted}
                 hidden={hidden}
+                scale={scale}
               />
             </VStack>
           </Box>
