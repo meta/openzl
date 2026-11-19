@@ -28,7 +28,7 @@ graph TD
 | --------------- | --------------- |
 | csv             | html            |
 | parquet         |                 |
-| protobuff       |                 |
+| protobuf        |                 |
 | thrift          |                 |
 | json            |                 |
 
