@@ -26,6 +26,7 @@
 #include <zstd.h>
 
 #include "tools/training/dict/base_dict_trainer.h"
+#include "tools/training/dict/dict_training.h"
 #include "tools/training/dict/zstd_dict_trainer.h"
 #include "tools/training/train_exceptions.h"
 #include "tools/training/trained_candidate.h"

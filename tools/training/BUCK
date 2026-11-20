@@ -19,7 +19,7 @@ zs_cxxlibrary(
         "../../custom_parsers:custom_parsers",
         "ace:automated_compressor_explorer",
         "clustering:clustering_graph_trainer",
-        "dict:base_dict_trainer",
+        "dict:dict_training",
         "graph_mutation:graph_mutation",
         "lz:lz_trainer",
     ] + select({
