@@ -6,32 +6,57 @@ oncall("data_compression")
 
 zs_cxxlibrary(
     name = "base_dict_trainer",
-    srcs = [
-        "base_dict_trainer.cpp",
-        "zstd_dict_trainer.cpp",
-    ],
     headers = {
         "base_dict_trainer.h": "base_dict_trainer.h",
         "tools/training/dict/base_dict_trainer.h": "base_dict_trainer.h",
+    },
+    exported_deps = [
+        "../../../cpp:openzl_cpp",
+        "../utils:training_utils",
+    ],
+)
+
+zs_cxxlibrary(
+    name = "zstd_dict_trainer",
+    srcs = ["zstd_dict_trainer.cpp"],
+    headers = {
         "tools/training/dict/zstd_dict_trainer.h": "zstd_dict_trainer.h",
         "zstd_dict_trainer.h": "zstd_dict_trainer.h",
     },
     # Zstd's advanced dictionary-training declarations require this macro.
     # The fbcode dependency supplies it automatically; the WASM dependency does not.
-    preprocessor_flags = select({
+    propagated_pp_flags = select({
         "DEFAULT": [],
         "ovr_config//runtime:wasm": ["-DZDICT_STATIC_LINKING_ONLY"],
     }),
     deps = [
         "../..:logger",
         "../../../cpp:openzl_cpp",
+    ],
+    exported_deps = [
+        ":base_dict_trainer",
+    ],
+    external_deps = [
+        "zstd",
+    ],
+)
+
+zs_cxxlibrary(
+    name = "dict_training",
+    srcs = ["dict_training.cpp"],
+    headers = {
+        "dict_training.h": "dict_training.h",
+        "tools/training/dict/dict_training.h": "dict_training.h",
+    },
+    deps = [
+        "../..:logger",
+        "../../../cpp:openzl_cpp",
         "../sample_collection:sample_collection",
+        ":zstd_dict_trainer",
     ],
     exported_deps = [
         "..:train_common",
         "../utils:training_utils",
-    ],
-    external_deps = [
-        "zstd",
+        ":base_dict_trainer",
     ],
 )

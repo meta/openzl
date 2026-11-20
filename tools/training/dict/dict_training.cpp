@@ -1,6 +1,6 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-#include "tools/training/dict/base_dict_trainer.h"
+#include "tools/training/dict/dict_training.h"
 
 #include <cstring>
 #include <set>
