@@ -255,6 +255,15 @@ class ACECompressor {
         return n;
     }
 
+    /// @returns An upper bound on the size any stream inside the compressor
+    /// can reach, as a multiple of the size of its input. It is 1 unless the
+    /// compressor has a node that writes more bytes than it reads. Bitunpack
+    /// is the only such node that ACE uses: it stores each group of numBits
+    /// bits in a whole 1, 2, 4 or 8 byte integer, and because a Numeric
+    /// output is accepted as a Serial input, bitunpack nodes chain and their
+    /// factors multiply.
+    double maxStreamExpansion() const;
+
     bool operator==(const ACECompressor& other) const
     {
         // Use the hash for equality for speed & simplicity.

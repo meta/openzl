@@ -2,9 +2,12 @@
 
 #include "tools/training/ace/ace_compressor.h"
 
+#include <algorithm>
 #include <sstream>
+#include <string>
 #include <type_traits>
 
+#include "openzl/codecs/zl_bitunpack.h"
 #include "openzl/common/a1cbor_helpers.h"
 #include "openzl/common/allocation.h"
 #include "openzl/shared/a1cbor.h"
@@ -675,6 +678,59 @@ std::string ACECompressor::prettyPrint() const
     std::stringstream ss;
     prettyPrintImpl(ss, *this, 0);
     return ss.str();
+}
+
+namespace {
+/// @returns The output bytes that @p node writes per input byte when the node
+/// grows its input, and 1 otherwise.
+double nodeExpansion(const ACENode& node)
+{
+    static const std::string kBitunpackName =
+            ACENode(nodes::Bitunpack{ 1 }).name;
+    if (node.name != kBitunpackName || !node.params.has_value()
+        || !node.params->localParams.has_value()) {
+        return 1.0;
+    }
+    for (const auto& param : node.params->localParams->getIntParams()) {
+        if (param.paramId == ZL_Bitunpack_numBits && param.paramValue > 0) {
+            // Same element widths as the bitunpack encoder
+            const int numBits = param.paramValue;
+            int eltWidth      = 8;
+            if (numBits <= 8) {
+                eltWidth = 1;
+            } else if (numBits <= 16) {
+                eltWidth = 2;
+            } else if (numBits <= 32) {
+                eltWidth = 4;
+            }
+            return (8.0 * eltWidth) / numBits;
+        }
+    }
+    return 1.0;
+}
+
+/// @returns The largest multiple of the input size that a stream inside
+/// @p compressor can reach, when the stream entering it is already
+/// @p expansion times the input size.
+double maxStreamExpansionImpl(const ACECompressor& compressor, double expansion)
+{
+    if (!compressor.isNode()) {
+        return expansion;
+    }
+    const auto& node = compressor.asNode();
+    expansion *= nodeExpansion(node.node);
+    double maxExpansion = expansion;
+    for (const auto& successor : node.successors) {
+        maxExpansion = std::max(
+                maxExpansion, maxStreamExpansionImpl(*successor, expansion));
+    }
+    return maxExpansion;
+}
+} // namespace
+
+double ACECompressor::maxStreamExpansion() const
+{
+    return maxStreamExpansionImpl(*this, 1.0);
 }
 
 poly::optional<ACECompressionResult> ACECompressor::benchmark(

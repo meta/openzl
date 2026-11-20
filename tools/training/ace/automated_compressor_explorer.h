@@ -178,6 +178,13 @@ class AutomatedCompressorExplorer : public GeneticAlgorithm<ACECompressor> {
 
     static constexpr size_t kAceStateParamId = 592;
 
+    /// Candidates whose `ACECompressor::maxStreamExpansion()` is above this
+    /// are given the fitness of a failed compression without being
+    /// benchmarked. The memory such a candidate needs is set by its graph, not
+    /// by the data, and grows by up to 8x for each chained bitunpack node. A
+    /// single bitunpack of 1 bit (8x) stays allowed.
+    static constexpr double kMaxStreamExpansion = 16.0;
+
    private:
     /// Small input sets get fewer batches, so that no batch holds much less
     /// than this.
