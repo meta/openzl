@@ -152,8 +152,8 @@ ZL_Report ZS_decodePrefix(
                             (__m256i const*)(blendMasks[currMatchSize])));
             _mm256_storeu_si256((__m256i_u*)(currOutPtr), vec);
             if (currMatchSize + currEltWidth > sizeof(__m256i)) {
-                uint32_t remSuffix =
-                        (currMatchSize + currEltWidth) - sizeof(__m256i);
+                uint32_t remSuffix = (uint32_t)((currMatchSize + currEltWidth)
+                                                - sizeof(__m256i));
                 ZS_wildcopy(
                         currOutPtr + sizeof(__m256i),
                         currSuffixPtr + (currEltWidth - remSuffix),
