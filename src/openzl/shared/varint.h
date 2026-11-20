@@ -109,10 +109,10 @@ ZL_FORCE_INLINE size_t ZL_varintEncode64Fast(uint64_t value, uint8_t* const dst)
     // Only the first 56 bits of @value will be deposited in @v.
     uint8_t const size = kSize[clzll];
     uint64_t v         = _pdep_u64(value, ~kMask) | kMask;
-    v                  = _bzhi_u64(v, size * 8 - 1);
+    v                  = _bzhi_u64(v, (unsigned)(size * 8 - 1));
 
     ZL_writeLE64(dst, v);
-    dst[8] = value >> 56;
+    dst[8] = (uint8_t)(value >> 56);
     dst[9] = 1;
     return size;
 #else
