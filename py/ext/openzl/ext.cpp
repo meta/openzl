@@ -1198,11 +1198,15 @@ class PyDCtx : public DCtx,
                public nb::intrusive_base {
    public:
     using DCtx::DCtx;
+    using PyBufferInput = nb::ndarray<const uint8_t, nb::ndim<1>, nb::c_contig, nb::memview, nb::ro>;
 
-    std::vector<nb::ref<PyOutput>> decompress(const nb::bytes& input)
+    std::vector<nb::ref<PyOutput>> decompress(PyBufferInput buffer)
     {
-        auto out = this->DCtx::decompress(
-                { static_cast<const char*>(input.data()), input.size() });
+        const char* input_data = reinterpret_cast<const char*>(buffer.data());
+        size_t input_size = buffer.size();
+
+        auto out = this->DCtx::decompress({ input_data, input_size });
+
         std::vector<nb::ref<PyOutput>> pyOut;
         pyOut.reserve(out.size());
         for (auto& o : out) {
@@ -1251,7 +1255,7 @@ void registerDCtxClass(nb::module_& m)
             .def("set_parameter", &PyDCtx::setParameter)
             .def("get_parameter", &PyDCtx::getParameter)
             .def("reset_parameters", &PyDCtx::resetParameters)
-            .def("decompress", &PyDCtx::decompress)
+            .def("decompress", &PyDCtx::decompress, nb::arg("compressed").noconvert())
             .def("register_custom_decoder", &PyDCtx::registerCustomDecoder);
 }
 
