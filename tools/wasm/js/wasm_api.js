@@ -123,6 +123,110 @@ function runTraining(mod, mem, minCandidates, data, compressor, options) {
   }
 }
 
+function runCompression(mod, mem, data, compressor, getTrace) {
+  if (!(data instanceof Uint8Array)) {
+    throw new Error('compress expects Uint8Array');
+  }
+  if (!(compressor instanceof Uint8Array)) {
+    throw new Error('compress expects a serialized compressor Uint8Array');
+  }
+  let compPtr = 0;
+  let srcPtr = 0;
+  let outBuf = 0;
+  let outSize = 0;
+  let bufPtr = 0;
+  let outTrace = 0;
+  let outTraceSize = 0;
+  let tracePtr = 0;
+  try {
+    compPtr = mem.writeBytes(compressor);
+    srcPtr = mem.writeBytes(data);
+    outBuf = mem.malloc(PTR_BYTES);
+    outSize = mem.malloc(SIZE_T_BYTES);
+    if (getTrace) {
+      outTrace = mem.malloc(PTR_BYTES);
+      outTraceSize = mem.malloc(SIZE_T_BYTES);
+    }
+    const args = [
+      mem.toWasm64(compPtr),
+      mem.toWasm64(compressor.length),
+      mem.toWasm64(srcPtr),
+      mem.toWasm64(data.length),
+      mem.toWasm64(outBuf),
+      mem.toWasm64(outSize),
+    ];
+    const errorCode = getTrace
+      ? mod._openzl_wasm_compressWithTrace(...args, mem.toWasm64(outTrace), mem.toWasm64(outTraceSize))
+      : mod._openzl_wasm_compress(...args);
+    if (errorCode !== 0) {
+      throwWasmError(mem, errorCode, 'compress failed');
+    }
+    bufPtr = mem.readPointer(outBuf);
+    if (getTrace) {
+      tracePtr = mem.readPointer(outTrace);
+    }
+    const compressed = mem.readBytes(bufPtr, mem.readSizeT(outSize));
+    return getTrace ? {compressed, trace: mem.readBytes(tracePtr, mem.readSizeT(outTraceSize))} : compressed;
+  } finally {
+    mem.free(tracePtr);
+    mem.free(outTrace);
+    mem.free(outTraceSize);
+    mem.free(bufPtr);
+    mem.free(compPtr);
+    mem.free(srcPtr);
+    mem.free(outBuf);
+    mem.free(outSize);
+  }
+}
+
+function runDecompression(mod, mem, compressed, getTrace) {
+  if (!(compressed instanceof Uint8Array)) {
+    throw new Error('decompress expects Uint8Array');
+  }
+  let srcPtr = 0;
+  let outBuf = 0;
+  let outSize = 0;
+  let bufPtr = 0;
+  let outTrace = 0;
+  let outTraceSize = 0;
+  let tracePtr = 0;
+  try {
+    srcPtr = mem.writeBytes(compressed);
+    outBuf = mem.malloc(PTR_BYTES);
+    outSize = mem.malloc(SIZE_T_BYTES);
+    if (getTrace) {
+      outTrace = mem.malloc(PTR_BYTES);
+      outTraceSize = mem.malloc(SIZE_T_BYTES);
+    }
+    const args = [
+      mem.toWasm64(srcPtr),
+      mem.toWasm64(compressed.length),
+      mem.toWasm64(outBuf),
+      mem.toWasm64(outSize),
+    ];
+    const errorCode = getTrace
+      ? mod._openzl_wasm_decompressWithTrace(...args, mem.toWasm64(outTrace), mem.toWasm64(outTraceSize))
+      : mod._openzl_wasm_decompress(...args);
+    if (errorCode !== 0) {
+      throwWasmError(mem, errorCode, 'decompress failed');
+    }
+    bufPtr = mem.readPointer(outBuf);
+    if (getTrace) {
+      tracePtr = mem.readPointer(outTrace);
+    }
+    const decompressed = mem.readBytes(bufPtr, mem.readSizeT(outSize));
+    return getTrace ? {decompressed, trace: mem.readBytes(tracePtr, mem.readSizeT(outTraceSize))} : decompressed;
+  } finally {
+    mem.free(tracePtr);
+    mem.free(outTrace);
+    mem.free(outTraceSize);
+    mem.free(bufPtr);
+    mem.free(srcPtr);
+    mem.free(outBuf);
+    mem.free(outSize);
+  }
+}
+
 function clampIterations(n, maxIterations) {
   if (typeof n !== 'number' || !Number.isFinite(n)) {
     throw new Error(`benchmark iterations must be a finite number, got ${String(n)} — expected 1..${maxIterations}`);
@@ -422,73 +526,19 @@ export async function createOpenZL(options = {}) {
     },
 
     compress(data, compressor) {
-      if (!(data instanceof Uint8Array)) {
-        throw new Error('compress expects Uint8Array');
-      }
-      if (!(compressor instanceof Uint8Array)) {
-        throw new Error('compress expects a serialized compressor Uint8Array');
-      }
-      let compPtr = 0;
-      let srcPtr = 0;
-      let outBuf = 0;
-      let outSize = 0;
-      let bufPtr = 0;
-      try {
-        compPtr = mem.writeBytes(compressor);
-        srcPtr = mem.writeBytes(data);
-        outBuf = mem.malloc(PTR_BYTES);
-        outSize = mem.malloc(SIZE_T_BYTES);
-        const code = mod._openzl_wasm_compress(
-          mem.toWasm64(compPtr),
-          mem.toWasm64(compressor.length),
-          mem.toWasm64(srcPtr),
-          mem.toWasm64(data.length),
-          mem.toWasm64(outBuf),
-          mem.toWasm64(outSize),
-        );
-        if (code !== 0) {
-          throwWasmError(mem, code, 'compress failed');
-        }
-        bufPtr = mem.readPointer(outBuf);
-        return mem.readBytes(bufPtr, mem.readSizeT(outSize));
-      } finally {
-        mem.free(bufPtr);
-        mem.free(compPtr);
-        mem.free(srcPtr);
-        mem.free(outBuf);
-        mem.free(outSize);
-      }
+      return runCompression(mod, mem, data, compressor, false);
+    },
+
+    compressWithTrace(data, compressor) {
+      return runCompression(mod, mem, data, compressor, true);
     },
 
     decompress(compressed) {
-      if (!(compressed instanceof Uint8Array)) {
-        throw new Error('decompress expects Uint8Array');
-      }
-      let srcPtr = 0;
-      let outBuf = 0;
-      let outSize = 0;
-      let bufPtr = 0;
-      try {
-        srcPtr = mem.writeBytes(compressed);
-        outBuf = mem.malloc(PTR_BYTES);
-        outSize = mem.malloc(SIZE_T_BYTES);
-        const code = mod._openzl_wasm_decompress(
-          mem.toWasm64(srcPtr),
-          mem.toWasm64(compressed.length),
-          mem.toWasm64(outBuf),
-          mem.toWasm64(outSize),
-        );
-        if (code !== 0) {
-          throwWasmError(mem, code, 'decompress failed');
-        }
-        bufPtr = mem.readPointer(outBuf);
-        return mem.readBytes(bufPtr, mem.readSizeT(outSize));
-      } finally {
-        mem.free(bufPtr);
-        mem.free(srcPtr);
-        mem.free(outBuf);
-        mem.free(outSize);
-      }
+      return runDecompression(mod, mem, compressed, false);
+    },
+
+    decompressWithTrace(compressed) {
+      return runDecompression(mod, mem, compressed, true);
     },
 
     benchmark(data, compressor, iterations = DEFAULT_BENCHMARK_ITERATIONS) {

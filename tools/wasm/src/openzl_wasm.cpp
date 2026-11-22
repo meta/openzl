@@ -19,8 +19,10 @@
 #include "tools/wasm/src/openzl_wasm.h"
 
 #include "openzl/codecs/zl_illegal.h"
+#include "openzl/cpp/CCtx.hpp"
 #include "openzl/cpp/CParam.hpp"
 #include "openzl/cpp/Compressor.hpp"
+#include "openzl/cpp/DCtx.hpp"
 #include "openzl/cpp/Exception.hpp"
 #include "openzl/cpp/Input.hpp"
 #include "openzl/cpp/poly/StringView.hpp"
@@ -401,26 +403,47 @@ ZL_ErrorCode tryCompress(
         size_t srcSize,
         uint8_t* dst,
         size_t dstCapacity,
-        size_t* written)
+        size_t* written,
+        bool getTrace,
+        BufferPtr& trace,
+        size_t* traceSize)
 {
-    CCtxPtr cctx{ ZL_CCtx_create() };
-    if (!cctx) {
+    try {
+        openzl::CCtx cctx;
+        cctx.writeTraces(getTrace);
+        ZL_ErrorCode permissive = setPermissive(cctx.get());
+        if (permissive != ZL_ErrorCode_no_error) {
+            return permissive;
+        }
+        ZL_Report ref = ZL_CCtx_refCompressor(cctx.get(), comp);
+        if (ZL_isError(ref)) {
+            return ZL_errorCode(ref);
+        }
+        // compressSerial only marks src as raw bytes, the profile still comes
+        // from the compressor referenced above. Goes through
+        // ZL_CCtx_compressMultiTypedRef, which is the entry point the trace
+        // hooks start recording on.
+        *written = cctx.compressSerial(
+                { reinterpret_cast<char*>(dst), dstCapacity },
+                { reinterpret_cast<const char*>(src), srcSize });
+        if (getTrace) {
+            const auto bytes = cctx.getLatestTrace().first;
+            trace            = allocBuffer(bytes.size());
+            if (!trace) {
+                return ZL_ErrorCode_allocation;
+            }
+            ZL_memcpy(trace.get(), bytes.data(), bytes.size());
+            *traceSize = bytes.size();
+        }
+        return ZL_ErrorCode_no_error;
+    } catch (const std::bad_alloc&) {
         return ZL_ErrorCode_allocation;
+    } catch (const openzl::Exception& e) {
+        const auto code = e.code();
+        return code ? *code : ZL_ErrorCode_GENERIC;
+    } catch (...) {
+        return ZL_ErrorCode_GENERIC;
     }
-    ZL_ErrorCode permissive = setPermissive(cctx.get());
-    if (permissive != ZL_ErrorCode_no_error) {
-        return permissive;
-    }
-    ZL_Report ref = ZL_CCtx_refCompressor(cctx.get(), comp);
-    if (ZL_isError(ref)) {
-        return ZL_errorCode(ref);
-    }
-    ZL_Report cr = ZL_CCtx_compress(cctx.get(), dst, dstCapacity, src, srcSize);
-    if (ZL_isError(cr)) {
-        return ZL_errorCode(cr);
-    }
-    *written = ZL_validResult(cr);
-    return ZL_ErrorCode_no_error;
 }
 
 size_t clampTrainThreads(size_t threads)
@@ -765,11 +788,39 @@ ZL_ErrorCode openzl_wasm_compress(
         uint8_t** outBuf,
         size_t* outSize)
 {
-    if (!outBuf || !outSize) {
+    return openzl_wasm_compressWithTrace(
+            compressor,
+            compressorSize,
+            src,
+            srcSize,
+            outBuf,
+            outSize,
+            nullptr,
+            nullptr);
+}
+
+EMSCRIPTEN_KEEPALIVE
+ZL_ErrorCode openzl_wasm_compressWithTrace(
+        const uint8_t* compressor,
+        size_t compressorSize,
+        const uint8_t* src,
+        size_t srcSize,
+        uint8_t** outBuf,
+        size_t* outSize,
+        uint8_t** outTrace,
+        size_t* outTraceSize)
+{
+    if (!outBuf || !outSize
+        || ((outTrace == nullptr) != (outTraceSize == nullptr))) {
         return ZL_ErrorCode_parameter_invalid;
     }
-    *outBuf  = nullptr;
-    *outSize = 0;
+    const bool getTrace = outTrace != nullptr;
+    *outBuf             = nullptr;
+    *outSize            = 0;
+    if (getTrace) {
+        *outTrace     = nullptr;
+        *outTraceSize = 0;
+    }
     if (!compressor || compressorSize == 0) {
         return ZL_ErrorCode_parameter_invalid;
     }
@@ -792,13 +843,28 @@ ZL_ErrorCode openzl_wasm_compress(
     }
 
     size_t written = 0;
-    code = tryCompress(comp.get(), src, srcSize, buf.get(), capacity, &written);
+    BufferPtr trace;
+    size_t traceSize = 0;
+    code             = tryCompress(
+            comp.get(),
+            src,
+            srcSize,
+            buf.get(),
+            capacity,
+            &written,
+            getTrace,
+            trace,
+            &traceSize);
     if (code != ZL_ErrorCode_no_error) {
         return code;
     }
 
     *outBuf  = buf.release();
     *outSize = written;
+    if (getTrace) {
+        *outTrace     = trace.release();
+        *outTraceSize = traceSize;
+    }
     return ZL_ErrorCode_no_error;
 }
 
@@ -830,11 +896,30 @@ ZL_ErrorCode openzl_wasm_decompress(
         uint8_t** outBuf,
         size_t* outSize)
 {
-    if (!outBuf || !outSize) {
+    return openzl_wasm_decompressWithTrace(
+            src, srcSize, outBuf, outSize, nullptr, nullptr);
+}
+
+EMSCRIPTEN_KEEPALIVE
+ZL_ErrorCode openzl_wasm_decompressWithTrace(
+        const uint8_t* src,
+        size_t srcSize,
+        uint8_t** outBuf,
+        size_t* outSize,
+        uint8_t** outTrace,
+        size_t* outTraceSize)
+{
+    if (!outBuf || !outSize
+        || ((outTrace == nullptr) != (outTraceSize == nullptr))) {
         return ZL_ErrorCode_parameter_invalid;
     }
-    *outBuf  = nullptr;
-    *outSize = 0;
+    const bool getTrace = outTrace != nullptr;
+    *outBuf             = nullptr;
+    *outSize            = 0;
+    if (getTrace) {
+        *outTrace     = nullptr;
+        *outTraceSize = 0;
+    }
     if (!src) {
         return ZL_ErrorCode_parameter_invalid;
     }
@@ -851,18 +936,42 @@ ZL_ErrorCode openzl_wasm_decompress(
     if (!buf) {
         return ZL_ErrorCode_allocation;
     }
-    DCtxPtr dctx{ ZL_DCtx_create() };
-    if (!dctx) {
+    BufferPtr trace;
+    size_t traceSize = 0;
+    size_t written   = 0;
+    try {
+        openzl::DCtx dctx;
+        dctx.writeTraces(getTrace);
+        // decompressSerial wraps the output as raw bytes and goes through
+        // ZL_DCtx_decompressTBuffer, which is the entry point the trace
+        // hooks start recording on.
+        written = dctx.decompressSerial(
+                { reinterpret_cast<char*>(buf.get()), capacity },
+                { reinterpret_cast<const char*>(src), srcSize });
+        if (getTrace) {
+            const auto bytes = dctx.getLatestTrace().first;
+            trace            = allocBuffer(bytes.size());
+            if (!trace) {
+                return ZL_ErrorCode_allocation;
+            }
+            ZL_memcpy(trace.get(), bytes.data(), bytes.size());
+            traceSize = bytes.size();
+        }
+    } catch (const std::bad_alloc&) {
         return ZL_ErrorCode_allocation;
-    }
-    ZL_Report r =
-            ZL_DCtx_decompress(dctx.get(), buf.get(), capacity, src, srcSize);
-    if (ZL_isError(r)) {
-        return ZL_errorCode(r);
+    } catch (const openzl::Exception& e) {
+        const auto errorCode = e.code();
+        return errorCode ? *errorCode : ZL_ErrorCode_GENERIC;
+    } catch (...) {
+        return ZL_ErrorCode_GENERIC;
     }
 
     *outBuf  = buf.release();
-    *outSize = ZL_validResult(r);
+    *outSize = written;
+    if (getTrace) {
+        *outTrace     = trace.release();
+        *outTraceSize = traceSize;
+    }
     return ZL_ErrorCode_no_error;
 }
 
