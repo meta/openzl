@@ -36,6 +36,7 @@ struct ParsedGraph {
 
 struct ParsedChunk {
     size_t chunkId{};
+    size_t numStreams{};
     std::vector<ParsedCodec> codecs;
     std::vector<ParsedGraph> graphs;
 };
@@ -153,6 +154,11 @@ inline ParsedChunk parseChunk(const A1C_Item* item)
     const A1C_Map* m = &item->map;
     chunk.chunkId =
             static_cast<size_t>(extractInt(A1C_Map_get_cstr(m, "chunkId")));
+
+    const A1C_Item* streamsItem = A1C_Map_get_cstr(m, "streams");
+    if (streamsItem != nullptr && streamsItem->type == A1C_ItemType_array) {
+        chunk.numStreams = streamsItem->array.size;
+    }
 
     const A1C_Item* codecsItem = A1C_Map_get_cstr(m, "codecs");
     if (codecsItem != nullptr && codecsItem->type == A1C_ItemType_array) {

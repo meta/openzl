@@ -75,7 +75,11 @@ export interface OpenZL {
    */
   train(data: Uint8Array, compressor: Uint8Array, options?: TrainOptions): Uint8Array[];
   compress(data: Uint8Array, compressor: Uint8Array): Uint8Array;
+  /** Returns compressed bytes and a CBOR trace with stream previews. */
+  compressWithTrace(data: Uint8Array, compressor: Uint8Array): {compressed: Uint8Array; trace: Uint8Array};
   decompress(compressed: Uint8Array): Uint8Array;
+  /** Returns decompressed bytes and a CBOR trace with stream previews. */
+  decompressWithTrace(compressed: Uint8Array): {decompressed: Uint8Array; trace: Uint8Array};
   benchmark(data: Uint8Array, compressor: Uint8Array, iterations?: number): BenchmarkResult;
 }
 

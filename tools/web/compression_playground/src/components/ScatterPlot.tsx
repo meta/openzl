@@ -1,6 +1,7 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-import {Box, Text, useToken} from '@chakra-ui/react';
+import {useState} from 'react';
+import {Box, Text, chakra, useToken} from '@chakra-ui/react';
 import {
   CartesianGrid,
   ReferenceLine,
@@ -12,7 +13,7 @@ import {
   YAxis,
 } from 'recharts';
 import type {CompressorName} from '../compressors.ts';
-import type {JobResult} from '../benchmarkTypes.ts';
+import type {JobResult, OpenZLJobResult} from '../benchmarkTypes.ts';
 import {
   buildSeries,
   formatRatioTick,
@@ -23,7 +24,7 @@ import {
   type Series,
   type SpeedAxis,
 } from '../charts.ts';
-import {formatRatio, formatSpeed} from '../measurements.ts';
+import {formatRatio, formatSpeed, measurementKey} from '../measurements.ts';
 import {CODEC_COLOR} from '../theme.ts';
 
 /**
@@ -44,19 +45,74 @@ function useChartColors() {
   return {codec: {OpenZL: openzl, zstd, gzip} satisfies Record<CompressorName, string>, line, label, surface};
 }
 
-function PointTooltip({active, payload}: {active?: boolean; payload?: {payload: ChartPoint}[]}) {
+/** Browsers start the download asynchronously after `click()`, so revoking immediately can cancel it. */
+const REVOKE_DOWNLOAD_URL_DELAY_MS = 30_000;
+
+function downloadCompressor(result: OpenZLJobResult) {
+  const url = URL.createObjectURL(new Blob([new Uint8Array(result.serializedCompressor)]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = result.candidate === null
+    ? `${result.job.profile}-level${String(result.job.level)}.zlc`
+    : `${result.job.profile}-trained-${String(result.candidate.index)}.zlc`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DOWNLOAD_URL_DELAY_MS);
+}
+
+function PointTooltip({
+  active,
+  payload,
+  results,
+  onPointerInside,
+}: {
+  active?: boolean;
+  payload?: {payload: ChartPoint}[];
+  results: readonly JobResult[];
+  onPointerInside: (inside: boolean) => void;
+}) {
   const point = payload?.[0]?.payload;
   if (active !== true || point === undefined) {
     return null;
   }
+  const result = results.find(
+    (one): one is OpenZLJobResult =>
+      measurementKey(one) === point.key && one.job.compressor === 'OpenZL' && 'serializedCompressor' in one,
+  );
   return (
-    <Box bg="pg.surface" borderWidth="1px" borderColor="pg.border" borderRadius="6px" px="10px" py="6px" boxShadow="sm">
+    <Box
+      bg="pg.surface"
+      borderWidth="1px"
+      borderColor="pg.border"
+      borderRadius="6px"
+      px="10px"
+      py="6px"
+      boxShadow="sm"
+      onMouseEnter={() => {
+        onPointerInside(true);
+      }}
+      onMouseLeave={() => {
+        onPointerInside(false);
+      }}>
       <Text fontSize="12px" fontWeight="bold" color="pg.ink" m={0}>
         {point.label}
       </Text>
       <Text fontSize="12px" color="pg.secondary" m={0} whiteSpace="nowrap">
         {formatRatio(point.y)} at {formatSpeed(point.x)}
       </Text>
+      {result !== undefined && (
+        <chakra.button
+          type="button"
+          mt="4px"
+          fontSize="12px"
+          color="pg.accent"
+          textDecoration="underline"
+          cursor="pointer"
+          onClick={() => {
+            downloadCompressor(result);
+          }}>
+          Download compressor
+        </chakra.button>
+      )}
     </Box>
   );
 }
@@ -92,6 +148,7 @@ export default function ScatterPlot({
   hidden: ReadonlySet<CompressorName>;
 }) {
   const {codec, line, label, surface} = useChartColors();
+  const [pointerInTooltip, setPointerInTooltip] = useState(false);
   const tickStyle = {fill: label, fontSize: 11};
   const shown = results.filter((result) => !hidden.has(result.job.compressor));
   const series = buildSeries(shown, axis);
@@ -124,7 +181,13 @@ export default function ScatterPlot({
           stroke={line}
           width={44}
         />
-        <Tooltip content={<PointTooltip />} cursor={{strokeDasharray: '3 3'}} />
+        <Tooltip
+          content={<PointTooltip results={results} onPointerInside={setPointerInTooltip} />}
+          cursor={{strokeDasharray: '3 3'}}
+          active={pointerInTooltip || undefined}
+          offset={0}
+          wrapperStyle={{pointerEvents: 'auto'}}
+        />
         {[...series.entries()].map(([key, one]) => (
           <Scatter
             key={key}
