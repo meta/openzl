@@ -1,16 +1,13 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 #include "numeric_stats.h"
+#include "numeric_kmv.h"
 
 #include "numeric_fixed_point.h"
 #include "wide_arith.h"
 
 #include "openzl/shared/mem.h"
 #include "openzl/shared/pdqsort.h"
-
-#define XXH_INLINE_ALL
-#define XXH_STATIC_LINKING_ONLY
-#include "openzl/shared/xxhash.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -55,7 +52,7 @@ kmv_heap_sift_down(TRS_NumericKmvEntry* heap, size_t size, size_t index)
     }
 }
 
-static void kmv_heap_insert(
+void TRS_numeric_kmv_insert(
         TRS_NumericKmvEntry* heap,
         size_t* size,
         uint64_t hash,
@@ -75,7 +72,8 @@ static void kmv_heap_insert(
             heap[parent]            = tmp;
             index                   = parent;
         }
-    } else if (hash < heap[0].hash) {
+    } else {
+        ZL_ASSERT_LT(hash, heap[0].hash);
         heap[0].hash  = hash;
         heap[0].value = value;
         kmv_heap_sift_down(heap, TRS_NUMERIC_KMV_K, 0);
@@ -452,8 +450,5 @@ void TRS_numeric_kmv_track_value(
         size_t* size,
         uint64_t value)
 {
-    uint8_t little_endian[sizeof(value)];
-    ZL_writeLE64(little_endian, value);
-    uint64_t const hash = XXH3_64bits(little_endian, sizeof(little_endian));
-    kmv_heap_insert(heap, size, hash, value);
+    TRS_numeric_kmv_track_inline(heap, size, value);
 }
