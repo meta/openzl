@@ -14,6 +14,7 @@ class ProtoSerializer {
    public:
     ProtoSerializer()
     {
+        compressor_.setParameter(CParam::FormatVersion, ZL_MAX_FORMAT_VERSION);
         auto graphid = ZL_Protobuf_registerGraph(compressor_.get());
         compressor_.selectStartingGraph(graphid);
 
@@ -33,6 +34,22 @@ class ProtoSerializer {
     void setCompressionLevel(int level)
     {
         cctx_.setParameter(CParam::CompressionLevel, level);
+    }
+
+    /**
+     * Enables OpenZL's generic fallback when a compression stage fails, for
+     * example when a custom compressor encounters input outside its domain.
+     * Fallback may reduce compression efficiency. Strict mode is the default.
+     *
+     * This setting persists across serialize() and setCompressor() calls. It
+     * only affects this serializer's compression context, not the compressor
+     * or training. Passing false explicitly restores strict mode.
+     */
+    void setPermissiveCompression(bool enabled)
+    {
+        cctx_.setParameter(
+                CParam::PermissiveCompression,
+                enabled ? ZL_TernaryParam_enable : ZL_TernaryParam_disable);
     }
 
     Compressor* getCompressor()

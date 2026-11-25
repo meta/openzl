@@ -26,6 +26,8 @@ zs_unittest(
     deps = [
         "..:serializer",
         "../../..:zstronglib",
+        "../../../custom_parsers:custom_parsers",
+        "../../training:train",
         ":test_schema-cpp",
     ],
     external_deps = ["protobuf"],
