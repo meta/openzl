@@ -5,7 +5,15 @@ import {runInNewContext} from 'node:vm';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 // Importing the CLI harness must not launch Electron or require a native build.
-const {waitForStarted} = createRequire(import.meta.url)('../electron/tests/cancellation-smoke.cjs') as {
+const {entryPoint, runWithTimeout, waitForStarted} = createRequire(import.meta.url)(
+  '../electron/tests/cancellation-smoke.cjs',
+) as {
+  entryPoint(isElectron: boolean, isMainModule: boolean): 'harness' | 'driver' | 'none';
+  runWithTimeout(
+    command: string,
+    args: string[],
+    timeoutMs: number,
+  ): Promise<{code: number | null; stdout: string; stderr: string; timedOut: boolean}>;
   waitForStarted(started: Promise<void>, done: Promise<void>, timeoutMs?: number): Promise<void>;
 };
 
@@ -92,5 +100,40 @@ describe('cancellation smoke renderer-start acknowledgement', () => {
   it('accepts an acknowledgement that has already arrived', async () => {
     await expect(waitForStarted(Promise.resolve(), deferred().promise)).resolves.toBeUndefined();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('cancellation smoke entry point', () => {
+  it('runs the harness under Electron even when this file is not the main module', () => {
+    expect(entryPoint(true, true)).toBe('harness');
+    expect(entryPoint(true, false)).toBe('harness');
+  });
+
+  it('starts the driver only when run directly under Node', () => {
+    expect(entryPoint(false, true)).toBe('driver');
+    expect(entryPoint(false, false)).toBe('none');
+  });
+});
+
+describe('cancellation smoke process timeout', () => {
+  beforeEach(() => vi.useRealTimers());
+
+  it('kills a process that never exits instead of waiting for it', async () => {
+    const started = Date.now();
+    const outcome = await runWithTimeout(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], 300);
+
+    expect(outcome.timedOut).toBe(true);
+    expect(outcome.code).toBeNull();
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it('returns the output of a process that exits in time', async () => {
+    const outcome = await runWithTimeout(
+      process.execPath,
+      ['-e', 'process.stdout.write("out"); process.stderr.write("err"); process.exitCode = 3'],
+      30_000,
+    );
+
+    expect(outcome).toEqual({code: 3, stdout: 'out', stderr: 'err', timedOut: false});
   });
 });
