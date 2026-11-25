@@ -34,10 +34,11 @@ interface ChartProps {
   axis: SpeedAxis;
   xLabel: string;
   highlighted: string | null;
+  onHighlight?: (key: string | null) => void;
   hidden: ReadonlySet<CompressorName>;
 }
 
-function Chart({results, axis, xLabel, highlighted, hidden}: ChartProps) {
+function Chart({results, axis, xLabel, highlighted, onHighlight, hidden}: ChartProps) {
   // The plot draws from the same series, so it is what says whether anything
   // is left to draw: a codec with no plottable point has no series to hide.
   const series = [...buildSeries(results, axis).values()];
@@ -71,7 +72,13 @@ function Chart({results, axis, xLabel, highlighted, hidden}: ChartProps) {
             </Text>
           ) : (
             <Suspense fallback={null}>
-              <ScatterPlot results={results} axis={axis} highlighted={highlighted} hidden={hidden} />
+              <ScatterPlot
+                results={results}
+                axis={axis}
+                highlighted={highlighted}
+                onHighlight={onHighlight}
+                hidden={hidden}
+              />
             </Suspense>
           )}
         </Box>
@@ -150,17 +157,20 @@ function LegendChip({compressor, count, shown, onToggle}: LegendChipProps) {
 
 /**
  * `highlighted` is the `measurementKey` of the point to pick out on both
- * charts. `hidden` holds the codecs switched off in the legend, which the
- * caller keeps so the table can follow; `onToggle` flips one.
+ * charts; `onHighlight` hears the key of the point under the pointer on either
+ * one, or null once it leaves. `hidden` holds the codecs switched off in the
+ * legend, which the caller keeps so the table can follow; `onToggle` flips one.
  */
 export default function RatioSpeedCharts({
   results,
   highlighted = null,
+  onHighlight,
   hidden,
   onToggle,
 }: {
   results: readonly JobResult[];
   highlighted?: string | null;
+  onHighlight?: (key: string | null) => void;
   hidden: ReadonlySet<CompressorName>;
   onToggle: (compressor: CompressorName) => void;
 }) {
@@ -196,8 +206,8 @@ export default function RatioSpeedCharts({
         </Heading>
         <Text color="pg.secondary" fontSize="13px" m={0}>
           These charts compare compression ratio against speed. Points toward the top right offer the best combination
-          of compression ratio and speed. Hover over a point to see details. Click a codec below to hide or show it on
-          the charts and in the table.
+          of compression ratio and speed. Hover over a point to see details and find it on the other chart. Click a
+          codec below to hide or show it on the charts and in the table.
         </Text>
       </VStack>
 
@@ -226,6 +236,7 @@ export default function RatioSpeedCharts({
                 axis={chart.axis}
                 xLabel={chart.xLabel}
                 highlighted={highlighted}
+                onHighlight={onHighlight}
                 hidden={hidden}
               />
             </VStack>

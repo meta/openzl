@@ -1,6 +1,6 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-import {useState} from 'react';
+import {useCallback, useState} from 'react';
 import {Box, Heading, Text, VStack} from '@chakra-ui/react';
 import {LuChartLine, LuChartSpline, LuMicroscope} from 'react-icons/lu';
 import {isRunInProgress, type BenchmarkJob, type Candidate, type JobResult, type RunState} from '../benchmarkTypes.ts';
@@ -69,12 +69,13 @@ export default function ResultsPanel({runState, showWasmNotice = true}: ResultsP
   const results = resultsOf(runState);
   const hasResults = results.length > 0;
   const isRunning = isRunInProgress(runState);
-  // The `measurementKey` of the table row under the pointer, picked out on the
-  // charts. While a run goes, rows arrive and re-sort under a pointer that has
-  // not moved, so no enter or leave fires, and the charts animate each new
-  // point in; a highlight would stay on a row that is no longer there. So none
-  // is taken until the run ends, and one only holds for the results it was
-  // made on, which keeps a key from the last run off the same job in this one.
+  // The `measurementKey` of the table row or chart point under the pointer,
+  // picked out on both charts. While a run goes, rows arrive and re-sort under
+  // a pointer that has not moved, so no enter or leave fires, and the charts
+  // animate each new point in; a highlight would stay on a row that is no
+  // longer there. So none is taken until the run ends, and one only holds for
+  // the results it was made on, which keeps a key from the last run off the
+  // same job in this one.
   const [hovered, setHovered] = useState<{key: string; results: readonly JobResult[]} | null>(null);
   const highlighted = !isRunning && hovered?.results === results ? hovered.key : null;
   // The codecs switched off in the legend, for the charts and the table alike.
@@ -84,6 +85,17 @@ export default function ResultsPanel({runState, showWasmNotice = true}: ResultsP
   if (!hasResults && hidden.size > 0) {
     setHidden(new Set());
   }
+  // Kept the same between highlights, so the charts need not draw their
+  // series again for one.
+  const highlight = useCallback(
+    (key: string | null) => {
+      setHovered((current) =>
+        key === null ? null : current?.key === key && current.results === results ? current : {key, results},
+      );
+    },
+    [results],
+  );
+  const onHighlight = isRunning ? undefined : highlight;
   const onToggle = (compressor: CompressorName) => {
     setHidden((current) => toggleCodec(current, compressor));
     // Rows that go away under a pointer that has not moved send no leave, and
@@ -125,13 +137,15 @@ export default function ResultsPanel({runState, showWasmNotice = true}: ResultsP
           </Text>
         )}
         {hasResults && (
-          <RatioSpeedCharts results={results} highlighted={highlighted} hidden={hidden} onToggle={onToggle} />
+          <RatioSpeedCharts
+            results={results}
+            highlighted={highlighted}
+            onHighlight={onHighlight}
+            hidden={hidden}
+            onToggle={onToggle}
+          />
         )}
-        <MeasurementsTable
-          runState={runState}
-          hidden={hidden}
-          onHighlight={isRunning ? undefined : (key) => setHovered(key === null ? null : {key, results})}
-        />
+        <MeasurementsTable runState={runState} hidden={hidden} onHighlight={onHighlight} />
         <FailureList runState={runState} />
 
         {/* Only true of the browser build: the desktop app measures with native zli. */}
