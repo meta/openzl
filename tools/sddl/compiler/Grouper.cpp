@@ -216,6 +216,9 @@ class GrouperImpl {
             // Implicitly terminate last expression, even if the explicit
             // terminator ';' or even the implicit terminator '\n' is missing.
             // I.e., don't require programs end in a new-line.
+            nodes_in_cur_stmt.push_back(
+                    std::make_shared<GroupingToken>(
+                            Token{ SourceLocation::null(), Symbol::NL }));
             stmts.push_back(group_expr(std::move(nodes_in_cur_stmt)));
             nodes_in_cur_stmt.clear();
         }
