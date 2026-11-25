@@ -35,7 +35,7 @@ jobs:
             cxx_pkg: g++-aarch64-linux-gnu
             compiler_prefix: aarch64-linux-gnu-
             qemu_pkg: qemu-system-arm
-            qemu: qemu-aarch64-static
+            qemu: qemu-aarch64
             os: ubuntu-22.04
             cxxflags: ""
           # Compiles the I8MM NEON code paths (QEMU emulates them)
@@ -44,7 +44,7 @@ jobs:
             cxx_pkg: g++-aarch64-linux-gnu
             compiler_prefix: aarch64-linux-gnu-
             qemu_pkg: qemu-system-arm
-            qemu: qemu-aarch64-static
+            qemu: qemu-aarch64
             os: ubuntu-22.04
             cflags: "-march=armv8.6-a"
             cxxflags: "-march=armv8.6-a"
@@ -53,7 +53,7 @@ jobs:
             cxx_pkg: g++-powerpc64le-linux-gnu
             compiler_prefix: powerpc64le-linux-gnu-
             qemu_pkg: qemu-system-ppc
-            qemu: qemu-ppc64le-static
+            qemu: qemu-ppc64le
             os: ubuntu-latest
             cxxflags: ""
           - name: RISC-V
@@ -61,7 +61,7 @@ jobs:
             cxx_pkg: g++-riscv64-linux-gnu
             compiler_prefix: riscv64-linux-gnu-
             qemu_pkg: qemu-system-riscv64
-            qemu: qemu-riscv64-static
+            qemu: qemu-riscv64
             os: ubuntu-latest
             cxxflags: ""
     env:
@@ -75,7 +75,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install gcc-multilib g++-multilib qemu-utils qemu-user-static
+          sudo apt-get install gcc-multilib g++-multilib qemu-utils qemu-user
           sudo apt-get install ${{ matrix.cc_pkg }} ${{ matrix.cxx_pkg }} ${{ matrix.qemu_pkg }}
       - name: Show environment info
         run: |
