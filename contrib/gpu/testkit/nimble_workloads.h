@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "contrib/gpu/testkit/float_parses.h"
+#include "contrib/gpu/testkit/int_parses.h"
 #include "contrib/gpu/testkit/nimble_graph.h"
 
 // Seeded synthetic leaf streams for GPU decoder tests and benchmarks that need
@@ -42,6 +43,7 @@ struct PinnedValues {
 using WorkloadPattern = std::variant<
         FloatNormal,
         PinnedValues,
+        PlannedInts,
         PlannedFloats,
         GapAlphabetFloats,
         WideAlphabetFloats,
@@ -59,10 +61,11 @@ struct WorkloadSpec {
 // that `spec` describes: frameBytes / width little-endian values of
 // `spec.type`. `spec.seed` decides the alphabet of PinnedValues, and all
 // frames of one spec share it, as the frames of one Nimble column share a
-// value distribution. Each frame index draws its own values. Patterns other
-// than PinnedValues need F32. Throws std::invalid_argument if a pattern other
-// than PinnedValues has a type other than F32, if the parameters are invalid,
-// or if `frameBytes` is not a multiple of the element width.
+// value distribution. Each frame index draws its own values. PlannedInts
+// needs U64, and the other patterns except PinnedValues need F32. Throws
+// std::invalid_argument if a pattern has a type that it does not take, if the
+// parameters are invalid, or if `frameBytes` is not a multiple of the element
+// width.
 std::string generateFrame(
         const WorkloadSpec& spec,
         size_t frameBytes,
