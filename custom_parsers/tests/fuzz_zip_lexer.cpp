@@ -12,7 +12,7 @@ FUZZ(ZipLexerTest, FuzzLexer)
     std::array<ZS2_ZipToken, 10> tokens;
 
     ZS2_ZipLexer lexer;
-    auto report = ZS2_ZipLexer_init(&lexer, data.data(), data.size());
+    auto report = ZS2_ZipLexer_init(&lexer, data.data(), data.size(), NULL);
     if (ZL_isError(report)) {
         return;
     }

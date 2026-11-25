@@ -45,6 +45,8 @@ typedef struct {
  * Initializes a Zip lexer on the given input buffer. The lexer allows for
  * garbage data before & after the zip file.
  *
+ * @param opCtx The operation context to use for error reporting or NULL.
+ *
  * @returns Success if the input buffer may be a valid zip file,
  *          or an error code if the input file is definitely not
  *          a supported zip file.
@@ -52,18 +54,11 @@ typedef struct {
  * @note This lexer supports all zip files whose central directory
  *       is listed in order of occurrence in the file.
  */
-ZL_Report
-ZS2_ZipLexer_init(ZS2_ZipLexer* lexer, const void* src, size_t srcSize);
-
-/**
- * Initializes a Zip lexer with a known offset to the EOCD.
- * @see ZS2_ZipLexer_init()
- */
-ZL_Report ZS2_ZipLexer_initWithEOCD(
+ZL_Report ZS2_ZipLexer_init(
         ZS2_ZipLexer* lexer,
         const void* src,
         size_t srcSize,
-        size_t eocdOffset);
+        ZL_OperationContext* opCtx);
 
 /**
  * Lexes the next @p outCapacity tokens from the input buffer.
@@ -139,6 +134,8 @@ struct ZS2_ZipLexer_s {
     uint32_t endOfCentralDirectoryRecordSize;
 
     ZS2_ZipLexer_FileState fileState;
+
+    ZL_OperationContext* opCtx;
 };
 
 ZL_END_C_DECLS

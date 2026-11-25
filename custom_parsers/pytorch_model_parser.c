@@ -172,7 +172,8 @@ static ZL_Report pytorchModelSegmenter(ZL_Segmenter* sctx)
     const ZL_GraphID functionGraph = customGraphs.graphids[0];
 
     ZS2_ZipLexer lexer;
-    ZL_ERR_IF_ERR(ZS2_ZipLexer_init(&lexer, ZL_Input_ptr(input), inputSize));
+    ZL_ERR_IF_ERR(ZS2_ZipLexer_init(
+            &lexer, ZL_Input_ptr(input), inputSize, ZL__errorContext.opCtx));
 
     const size_t nbFiles   = ZS2_ZipLexer_numFiles(&lexer);
     const size_t maxNbSegs = nbFiles * 4 + 2;
