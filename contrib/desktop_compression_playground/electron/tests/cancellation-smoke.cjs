@@ -26,6 +26,8 @@ const ZLI = path.resolve(
 const SCENARIOS = ['cancel', 'busy', 'reload', 'kill-worker', 'quit'];
 const GONE_WITHIN_MS = 4000;
 const START_TIMEOUT_MS = 30_000;
+// Covers a scenario's own waits (window, start, teardown) with slack for a slow runner.
+const SCENARIO_TIMEOUT_MS = 180_000;
 
 /**
  * @param {Promise<void>} started
@@ -196,20 +198,45 @@ async function harness(scenario, sample) {
   app.exit(0);
 }
 
-function runScenario(electron, scenario, sample) {
+/**
+ * Runs a command to completion, killing it if it outlives `timeoutMs`.
+ *
+ * @param {string} command
+ * @param {string[]} args
+ * @param {number} timeoutMs
+ * @returns {Promise<{code: number | null, stdout: string, stderr: string, timedOut: boolean}>}
+ */
+function runWithTimeout(command, args, timeoutMs) {
   return new Promise((resolve) => {
-    const child = spawn(electron, [__filename, `--scenario=${scenario}`, `--sample=${sample}`], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const child = spawn(command, args, {stdio: ['ignore', 'pipe', 'pipe']});
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
     child.stdout.setEncoding('utf8').on('data', (chunk) => (stdout += chunk));
     child.stderr.setEncoding('utf8').on('data', (chunk) => (stderr += chunk));
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
     child.once('exit', (code) => {
-      const line = stdout.split('\n').find((candidate) => candidate.startsWith('RESULT '));
-      resolve({code, result: line === undefined ? undefined : JSON.parse(line.slice('RESULT '.length)), stderr});
+      clearTimeout(timeout);
+      if (timedOut) {
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }
+      resolve({code, stdout, stderr, timedOut});
     });
   });
+}
+
+async function runScenario(electron, scenario, sample) {
+  const {code, stdout, stderr, timedOut} = await runWithTimeout(
+    electron,
+    [__filename, `--scenario=${scenario}`, `--sample=${sample}`],
+    SCENARIO_TIMEOUT_MS,
+  );
+  const line = stdout.split('\n').find((candidate) => candidate.startsWith('RESULT '));
+  return {code, result: line === undefined ? undefined : JSON.parse(line.slice('RESULT '.length)), stderr, timedOut};
 }
 
 async function main() {
@@ -224,8 +251,11 @@ async function main() {
   const report = [];
   try {
     for (const scenario of SCENARIOS) {
-      const {code, result, stderr} = await runScenario(electron, scenario, sample);
-      assert.ok(result !== undefined && code === 0, `${scenario} failed (exit ${code}):\n${stderr.slice(-2000)}`);
+      const {code, result, stderr, timedOut} = await runScenario(electron, scenario, sample);
+      assert.ok(
+        result !== undefined && code === 0,
+        `${scenario} ${timedOut ? `timed out after ${SCENARIO_TIMEOUT_MS} ms` : `failed (exit ${code})`}:\n${stderr.slice(-2000)}`,
+      );
       assert.ok(
         await waitUntil(() => result.pids.every((pid) => !alive(pid)), GONE_WITHIN_MS),
         `${scenario}: zli ${result.pids} outlived the app`,
@@ -239,19 +269,35 @@ async function main() {
   process.stdout.write(`${JSON.stringify({ok: true, report}, null, 2)}\n`);
 }
 
-if (require.main === module) {
-  if (process.versions.electron !== undefined) {
-    const argument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
-    harness(argument('scenario'), argument('sample')).catch((error) => {
-      process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-      require('electron').app.exit(1);
-    });
-  } else {
-    main().catch((error) => {
-      process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-      process.exitCode = 1;
-    });
+/**
+ * Electron's `require.main` is not always this module, and a harness that
+ * never starts leaves Electron running with no window, so Electron always
+ * runs the harness. Under Node, only a direct run starts the driver, so
+ * importing this file for its helpers starts nothing.
+ *
+ * @param {boolean} isElectron
+ * @param {boolean} isMainModule
+ * @returns {'harness' | 'driver' | 'none'}
+ */
+function entryPoint(isElectron, isMainModule) {
+  if (isElectron) {
+    return 'harness';
   }
+  return isMainModule ? 'driver' : 'none';
 }
 
-module.exports = {waitForStarted};
+const entry = entryPoint(process.versions.electron !== undefined, require.main === module);
+if (entry === 'harness') {
+  const argument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
+  harness(argument('scenario'), argument('sample')).catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+    require('electron').app.exit(1);
+  });
+} else if (entry === 'driver') {
+  main().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {entryPoint, runWithTimeout, waitForStarted};
