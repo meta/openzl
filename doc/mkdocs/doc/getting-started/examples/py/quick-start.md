@@ -39,7 +39,7 @@ In this example, we'll work with very simple test data that is little-endian int
 
 ## Setting up a simple Compressor
 
-The [Compressor][openzl.ext.Compressor] tells OpenZL how to compress the data it recieves.
+The [Compressor][openzl.ext.Compressor] tells OpenZL how to compress the data it receives.
 This is how OpenZL is specialized to build a format-specific compressor for a particular use case.
 For now, we will just tell OpenZL to use the generic compression backend [graphs.Compress][openzl.ext.graphs.Compress].
 Later on, after we get through the basics, we'll build more complex compressors.
@@ -77,7 +77,7 @@ However, OpenZL excels when it knows the format of the data it is compressing.
 
 The simplest case is just telling OpenZL that the data is numeric data with a certain width. In this case, we'll compress little-endian int64 data.
 The only difference from `build_simple_compressor()` is that we added a node that converts from serial data to numeric data.
-The [Compress graph][openzl.ext.graphs.Compress] accepts any input type and handles it appropiately.
+The [Compress graph][openzl.ext.graphs.Compress] accepts any input type and handles it appropriately.
 
 ```python
 --8<-- "src/examples/py/quick_start.py:simple_int64_compressor"
