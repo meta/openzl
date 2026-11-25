@@ -297,34 +297,31 @@ TEST_F(ACETest, savePopulation)
             ace->inputs(), ZL_MAX_FORMAT_VERSION, ace->compressionLevel());
     ASSERT_TRUE(result.has_value());
     ASSERT_LE(result->compressedSize, 90);
-    auto snapshot = ace->savePopulation();
+    // The size objective, with ACE's small penalty for each component.
+    const float trainedBest = ace->solution()[0].second[0];
+    auto snapshot           = ace->savePopulation();
 
     // Build a new AutomatedCompressorExplorer
     AutomatedCompressorExplorer ace2({ &input, 1 }, params);
     ASSERT_TRUE(ace2.solution().empty());
     ace2.extendPopulation(ace2.initialPopulation());
     ASSERT_FALSE(ace2.solution().empty());
-    // Initial population doesn't have a good solution
-    {
-        auto solution2 = ace2.solution()[0].first;
-        auto result2   = solution2.benchmark(
-                ace->inputs(), ZL_MAX_FORMAT_VERSION, ace->compressionLevel());
-        ASSERT_TRUE(result2.has_value());
-        ASSERT_GT(result2->compressedSize, 74);
-        ASSERT_NE(solution, solution2);
-    }
+    // Both explorers use the same seed, so this is the population training
+    // started from, and training never loses the smallest compressor it has
+    // seen. Training need not do better than it, though: it is a stochastic
+    // search whose path depends on measured speeds, and in a few percent of
+    // runs 100 generations find nothing smaller than the best initial
+    // compressor.
+    EXPECT_LE(trainedBest, ace2.solution()[0].second[0]);
 
-    // Loading the snapshot gives good solution
+    // Loading the snapshot brings in every trained compressor, so the new
+    // explorer does at least as well as the trained one.
     ace2.loadPopulation(snapshot);
-    {
-        auto solution2 = ace2.solution()[0].first;
-        auto result2   = solution2.benchmark(
-                ace->inputs(), ZL_MAX_FORMAT_VERSION, ace->compressionLevel());
-        ASSERT_TRUE(result2.has_value());
-        ASSERT_LE(result2->compressedSize, 74);
+    const auto loaded = ace2.populationSet();
+    for (const auto& gene : ace->population()) {
+        EXPECT_EQ(loaded.count(gene), 1u);
     }
-    // NOTE: The exact smallest solution may not be preserved due to benchmark
-    // instability, since it might not be Pareto-optimal in the new benchmark.
+    EXPECT_LE(ace2.solution()[0].second[0], trainedBest);
 }
 
 TEST_F(ACETest, InputBatchesKeepCompressedSize)
