@@ -2,14 +2,22 @@
 
 #include <google/protobuf/util/message_differencer.h>
 #include <gtest/gtest.h>
-#if ZL_FBCODE_IS_RELEASE
-#    include "openzl/prod/tools/protobuf/tests/test_schema.pb.h"
-#else
-#    include "openzl/dev/tools/protobuf/tests/test_schema.pb.h"
-#endif
+#include <utility>
+#include <vector>
+#include "custom_parsers/dependency_registration.h"
 #include "openzl/cpp/Compressor.hpp"
+#if defined(ZL_IS_FBCODE) && (ZL_IS_FBCODE == 1)
+#    if ZL_FBCODE_IS_RELEASE
+#        include "openzl/prod/tools/protobuf/tests/test_schema.pb.h"
+#    else
+#        include "openzl/dev/tools/protobuf/tests/test_schema.pb.h"
+#    endif
+#else
+#    include "tools/protobuf/tests/test_schema.pb.h"
+#endif
 #include "tools/protobuf/ProtoDeserializer.h"
 #include "tools/protobuf/ProtoSerializer.h"
+#include "tools/training/train.h"
 
 using namespace ::testing;
 using namespace openzl::protobuf;
@@ -104,4 +112,34 @@ TEST(TestProtoSerializer, CustomCompressor)
             google::protobuf::util::MessageDifferencer::Equivalent(
                     obj, destored));
     EXPECT_NE(stored.size(), serialized.size());
+}
+
+TEST(TestProtoSerializer, TrainedCompressorRoundTrip)
+{
+    auto obj = genTestSchema();
+    ProtoSerializer serializer;
+    std::vector<openzl::training::MultiInput> inputs;
+    inputs.emplace_back(serializer.getTrainingInputs(obj));
+
+    openzl::training::TrainParams params;
+    params.compressorGenFunc =
+            openzl::custom_parsers::createCompressorFromSerialized;
+    params.clusteringTrainer = openzl::training::FullSplit;
+    params.threads           = 1;
+    params.maxTimeSecs       = 1;
+
+    auto trained = openzl::training::train(
+            inputs, *serializer.getCompressor(), params);
+    ASSERT_FALSE(trained.empty());
+
+    auto compressor = openzl::custom_parsers::createCompressorFromSerialized(
+            trained.front().serializedCompressor, "");
+    ProtoSerializer trainedSerializer;
+    trainedSerializer.setCompressor(std::move(*compressor));
+    auto serialized   = trainedSerializer.serialize(obj);
+    auto deserialized = ProtoDeserializer().deserialize<TestSchema>(serialized);
+
+    EXPECT_TRUE(
+            google::protobuf::util::MessageDifferencer::Equivalent(
+                    obj, deserialized));
 }

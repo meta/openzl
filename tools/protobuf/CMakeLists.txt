@@ -82,5 +82,22 @@ if (OPENZL_BUILD_PROTOBUF_TOOLS)
             protobuf_test_utils
         )
         gtest_discover_tests(test_protobuf_dynamic_messages)
+
+        # Test for ProtoSerializer and ProtoDeserializer
+        add_executable(test_proto_serializer
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_proto_serializer.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_schema.proto")
+        protobuf_generate(TARGET test_proto_serializer)
+        target_include_directories(test_proto_serializer PRIVATE
+            ${PROJECT_BINARY_DIR}
+            ${CMAKE_CURRENT_BINARY_DIR}
+        )
+        target_link_libraries(test_proto_serializer PRIVATE
+            protobuf_serializer
+            custom_parsers
+            tools_training
+            GTest::gtest_main
+        )
+        gtest_discover_tests(test_proto_serializer)
     endif()
 endif()
