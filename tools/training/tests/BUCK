@@ -41,6 +41,8 @@ cpp_unittest(
         "../clustering:train_api",
         "../clustering:training_clustering",
         "../dict:base_dict_trainer",
+        "../dict:dict_training",
+        "../dict:zstd_dict_trainer",
         "../lz:lz_trainer",
         "../utils:benchmark",
         "../utils:genetic_algorithm",
