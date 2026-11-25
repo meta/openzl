@@ -70,12 +70,10 @@ export default function ResultsPanel({runState, showWasmNotice = true}: ResultsP
   const hasResults = results.length > 0;
   const isRunning = isRunInProgress(runState);
   // The `measurementKey` of the table row or chart point under the pointer,
-  // picked out on both charts. While a run goes, rows arrive and re-sort under
-  // a pointer that has not moved, so no enter or leave fires, and the charts
-  // animate each new point in; a highlight would stay on a row that is no
-  // longer there. So none is taken until the run ends, and one only holds for
-  // the results it was made on, which keeps a key from the last run off the
-  // same job in this one.
+  // picked out on both charts and in the table. During a run, new rows can
+  // re-sort under a stationary pointer without firing enter or leave, and the
+  // charts animate new points in. Only highlight after the run, and only for
+  // the results the pointer was over.
   const [hovered, setHovered] = useState<{key: string; results: readonly JobResult[]} | null>(null);
   const highlighted = !isRunning && hovered?.results === results ? hovered.key : null;
   // The codecs switched off in the legend, for the charts and the table alike.
@@ -145,7 +143,7 @@ export default function ResultsPanel({runState, showWasmNotice = true}: ResultsP
             onToggle={onToggle}
           />
         )}
-        <MeasurementsTable runState={runState} hidden={hidden} onHighlight={onHighlight} />
+        <MeasurementsTable runState={runState} highlighted={highlighted} hidden={hidden} onHighlight={onHighlight} />
         <FailureList runState={runState} />
 
         {/* Only true of the browser build: the desktop app measures with native zli. */}

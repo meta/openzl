@@ -206,8 +206,8 @@ export default function RatioSpeedCharts({
         </Heading>
         <Text color="pg.secondary" fontSize="13px" m={0}>
           These charts compare compression ratio against speed. Points toward the top right offer the best combination
-          of compression ratio and speed. Hover over a point to see details and find it on the other chart. Click a
-          codec below to hide or show it on the charts and in the table.
+          of compression ratio and speed. Hover over a point to see details and find it on the other chart and in the
+          table. Click a codec below to hide or show it on the charts and in the table.
         </Text>
       </VStack>
 
