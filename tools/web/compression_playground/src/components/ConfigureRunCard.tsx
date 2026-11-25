@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Collapsible,
   IconButton,
   NativeSelect,
   Popover,
@@ -87,6 +88,7 @@ function OpenZlOptions({
   // pytorch, which the browser cannot run at all.
   const canTrain = isTrainableProfile(row.profile);
   const isTraining = row.trainRequested && canTrain;
+  const [guideOpen, setGuideOpen] = useState(true);
   return (
     <Box borderRadius="6px" overflow="hidden">
       <chakra.button
@@ -206,25 +208,56 @@ function OpenZlOptions({
               </Box>
             </Box>
 
-            <Box
-              display="flex"
-              gap="8px"
-              alignItems="center"
+            <Collapsible.Root
+              open={guideOpen}
+              onOpenChange={(details) => setGuideOpen(details.open)}
               bg="pg.accentBg"
               borderWidth="1px"
               borderColor="pg.infoBorder"
               borderRadius="6px"
               px="10px"
               py="8px">
-              <Box aria-hidden="true" color="pg.accent" flexShrink={0}>
-                <LuInfo size={14} />
-              </Box>
-              <Text color="pg.secondary" fontSize="11px" lineHeight="1.4" m={0}>
-                {canTrain
-                  ? 'Training builds a compression graph optimized for your data, using the selected profile as a starting point. This can take a while.'
-                  : `Training is not supported for the ${row.profile} profile`}
-              </Text>
-            </Box>
+              <Collapsible.Trigger
+                display="flex"
+                gap="8px"
+                alignItems="center"
+                width="100%"
+                cursor="pointer"
+                color="pg.ink"
+                fontSize="12px"
+                fontWeight="semibold">
+                <Box aria-hidden="true" color="pg.accent">
+                  <LuInfo size={14} />
+                </Box>
+                <Box flex="1" textAlign="left">
+                  How to set up OpenZL
+                </Box>
+                <Box aria-hidden="true" color="pg.secondary">
+                  {guideOpen ? <LuChevronDown size={12} /> : <LuChevronRight size={12} />}
+                </Box>
+              </Collapsible.Trigger>
+              <Collapsible.Content>
+                <Box as="ul" color="pg.secondary" fontSize="11px" lineHeight="1.4" m={0} mt="6px" pl="16px">
+                  <li>
+                    OpenZL builds a compressor specialized for your data&apos;s format, so it shines on structured data.
+                  </li>
+                  <br />
+                  <li>
+                    <b>Profile: </b>pick the one that matches your file.
+                  </li>
+                  <li>
+                    <b>Training: </b>
+                    {canTrain
+                      ? 'builds a compression graph tailored to your file. Note that training can be slow.'
+                      : `Training is not supported for the ${row.profile} profile`}
+                  </li>
+                  <br />
+                  <li>
+                    Not sure? Start with the default: <b>serial</b> profile with <b>training</b> on.
+                  </li>
+                </Box>
+              </Collapsible.Content>
+            </Collapsible.Root>
           </VStack>
         </Box>
       )}
