@@ -267,7 +267,7 @@ describe('RatioSpeedCharts', () => {
     expect(container.querySelectorAll('.highlighted-point')).toHaveLength(0);
   });
 
-  it('picks out a point hovered on one chart on both, until the pointer leaves it', async () => {
+  it('highlights a hovered point on both charts and its table row until the pointer leaves', async () => {
     const results = [
       result({compressor: 'zstd', id: 'z1', level: 1}, {ratio: 3, compressMBps: 500}),
       result({compressor: 'gzip', id: 'g6', level: 6}, {ratio: 5, compressMBps: 50}),
@@ -287,10 +287,15 @@ describe('RatioSpeedCharts', () => {
     expect(gzipSymbols).toHaveLength(2);
     const gzipFill = gzipSymbols[0].querySelector('path')?.getAttribute('fill');
 
+    const gzipRow = screen.getByRole('row', {name: /gzip/});
+    const zstdRow = screen.getByRole('row', {name: /zstd/});
+    expect(gzipRow).not.toHaveAttribute('data-highlighted');
     fireEvent.mouseEnter(gzipSymbols[1]);
     await waitFor(() => {
       expect(container.querySelectorAll('.highlighted-point')).toHaveLength(2);
     });
+    expect(gzipRow).toHaveAttribute('data-highlighted', 'true');
+    expect(zstdRow).not.toHaveAttribute('data-highlighted');
     const rings = [...container.querySelectorAll('.highlighted-point')];
     expect(rings.map((ring) => ring.getAttribute('fill'))).toEqual([gzipFill, gzipFill]);
     expect(screen.getByText('gzip Level 6')).toBeVisible();
@@ -304,6 +309,7 @@ describe('RatioSpeedCharts', () => {
 
     fireEvent.mouseLeave(gzipSymbols[1]);
     expect(container.querySelectorAll('.highlighted-point')).toHaveLength(0);
+    expect(gzipRow).not.toHaveAttribute('data-highlighted');
   });
 
   it('takes no highlight while a run is in progress', async () => {

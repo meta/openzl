@@ -141,10 +141,12 @@ function CandidateRank({result}: {result: JobResult}) {
 function MeasurementRow({
   row,
   peaks,
+  highlighted,
   onHighlight,
 }: {
   row: JobResult;
   peaks: Peaks;
+  highlighted: boolean;
   onHighlight?: (key: string | null) => void;
 }) {
   const color = CODEC_COLOR[row.job.compressor];
@@ -156,6 +158,8 @@ function MeasurementRow({
     <Box
       as="tr"
       _hover={{bg: 'pg.canvas'}}
+      _highlighted={{bg: 'pg.canvas'}}
+      data-highlighted={highlighted || undefined}
       onMouseEnter={() => onHighlight?.(measurementKey(row))}
       onMouseLeave={() => onHighlight?.(null)}>
       <chakra.th {...header}>
@@ -228,16 +232,18 @@ function nextSort(current: Sort, key: SortKey): Sort {
 const NONE_HIDDEN: ReadonlySet<CompressorName> = new Set();
 
 /**
- * `onHighlight` hears the `measurementKey` of the row under the pointer, or
- * null once it leaves. Rows of a `hidden` codec are left out; the bars still
- * scale to the whole run, so they do not move as codecs come and go.
+ * `highlighted` picks out the row with that `measurementKey`. `onHighlight`
+ * hears the key of the row under the pointer, or null once it leaves. Rows of
+ * a `hidden` codec are left out; the bars still scale to the whole run.
  */
 export default function MeasurementsTable({
   runState,
+  highlighted = null,
   onHighlight,
   hidden = NONE_HIDDEN,
 }: {
   runState: RunState;
+  highlighted?: string | null;
   onHighlight?: (key: string | null) => void;
   hidden?: ReadonlySet<CompressorName>;
 }) {
@@ -316,9 +322,18 @@ export default function MeasurementsTable({
             </Box>
           </Box>
           <Box as="tbody">
-            {rows.map((row) => (
-              <MeasurementRow key={measurementKey(row)} row={row} peaks={peaks} onHighlight={onHighlight} />
-            ))}
+            {rows.map((row) => {
+              const key = measurementKey(row);
+              return (
+                <MeasurementRow
+                  key={key}
+                  row={row}
+                  peaks={peaks}
+                  highlighted={highlighted === key}
+                  onHighlight={onHighlight}
+                />
+              );
+            })}
           </Box>
         </Box>
       </Box>
