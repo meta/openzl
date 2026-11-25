@@ -1,0 +1,37 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+
+load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
+load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
+load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
+load("../../../../../defs.bzl", "relative_headers")
+
+oncall("data_compression")
+
+# The CUDA runtime's zstd kernels: zstd.cuda, and zstd.nvcomp when it is
+# enabled. Neither is implemented yet.
+cpp_library(
+    # @autodeps-skip
+    name = "decode_zstd_cuda",
+    srcs = ["decode_zstd_cuda.cpp"],
+    headers = relative_headers(["decode_zstd_cuda.hpp"]),
+    header_namespace = "",
+    deps = [
+        "../../../../..:zstronglib",
+        "../../device:nvcomp",
+    ],
+    exported_deps = ["../../common:codec_decode_execution"],
+)
+
+cpp_unittest(
+    # @autodeps-skip
+    name = "decode_zstd_cuda_test",
+    srcs = ["tests/DecodeZstdCudaTest.cpp"],
+    network_access = network_access_utils.none(),
+    deps = [
+        "../../../../..:zstronglib",
+        "../../device:cuda_device",
+        "../../device:nvcomp",
+        "fbsource//third-party/googletest:gtest",
+        ":decode_zstd_cuda",
+    ],
+)
