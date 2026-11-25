@@ -78,7 +78,6 @@ ZL_GraphID buildCompressorBFloat16(ZL_Compressor* compressor)
 ZL_GraphID buildCompressorFloat16(ZL_Compressor* compressor)
 {
     parameterizeCompressor(compressor);
-    parameterizeCompressor(compressor);
     const ZL_GraphID bitpack = ZL_Compressor_registerStaticGraph_fromNode1o(
             compressor, ZL_NODE_INTERPRET_TOKEN_AS_LE, ZL_GRAPH_BITPACK);
     std::array<ZL_GraphID, 2> successors = {
@@ -96,7 +95,6 @@ ZL_GraphID buildCompressorFloat16(ZL_Compressor* compressor)
 
 ZL_GraphID buildCompressorFloat32(ZL_Compressor* compressor)
 {
-    parameterizeCompressor(compressor);
     parameterizeCompressor(compressor);
     std::array<ZL_GraphID, 2> successors = {
         ZL_GRAPH_STORE, // sign+fraction
