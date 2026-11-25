@@ -1,0 +1,14 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+name: @PACKAGE_NAME@-cpp
+description: @PACKAGE_DESCRIPTION@
+version: @PACKAGE_VERSION@
+license: BSD-3-Clause
+url: https://openzl.org
+source: http://github.com/facebook/openzl/archive/v@PACKAGE_VERSION@/openzl-@PACKAGE_VERSION@.tar.gz
+requires: libzstd openzl
+libs: -L${libdir} -lopenzl_cpp
+cflags: -I${includedir}

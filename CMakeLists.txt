@@ -7,6 +7,7 @@ cmake_minimum_required(VERSION 3.20.2 FATAL_ERROR)
 cmake_policy(SET CMP0077 NEW)
 
 set(PACKAGE_NAME "openzl")
+set(PACKAGE_DESCRIPTION "A novel data compression framework")
 project(${PACKAGE_NAME} CXX C ASM)
 
 # ---- Build Options ----
@@ -357,7 +358,23 @@ if (OPENZL_INSTALL)
         COMPONENT dev
     )
 
-    # TODO: Generate a pkg-config file
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/openzl.pc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/openzl.pc"
+        @ONLY
+    )
+    
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/openzl-cpp.pc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/openzl-cpp.pc"
+        @ONLY
+    )
+
+    install(
+        FILES "${CMAKE_CURRENT_BINARY_DIR}/openzl.pc" "${CMAKE_CURRENT_BINARY_DIR}/openzl-cpp.pc"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+    )
+
 endif()
 
 # ---- Trailing User Messages ----
