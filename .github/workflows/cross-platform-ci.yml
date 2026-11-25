@@ -54,7 +54,7 @@ jobs:
             compiler_prefix: powerpc64le-linux-gnu-
             qemu_pkg: qemu-system-ppc
             qemu: qemu-ppc64le-static
-            os: ubuntu-latest
+            os: ubuntu-24.04
             cxxflags: ""
           - name: RISC-V
             cc_pkg: gcc-riscv64-linux-gnu
@@ -62,7 +62,7 @@ jobs:
             compiler_prefix: riscv64-linux-gnu-
             qemu_pkg: qemu-system-riscv64
             qemu: qemu-riscv64-static
-            os: ubuntu-latest
+            os: ubuntu-24.04
             cxxflags: ""
     env:
       CC: ${{ matrix.compiler_prefix }}gcc
