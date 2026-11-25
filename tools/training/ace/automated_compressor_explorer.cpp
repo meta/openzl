@@ -118,6 +118,9 @@ AutomatedCompressorExplorer::splitInputs(
 std::vector<float> AutomatedCompressorExplorer::computeFitness(
         const ACECompressor& gene)
 {
+    if (gene.maxStreamExpansion() > kMaxStreamExpansion) {
+        return fitnessFromResult(gene, poly::nullopt);
+    }
     return fitnessFromResult(
             gene, gene.benchmark(inputs_, formatVersion_, compressionLevel_));
 }
@@ -145,6 +148,12 @@ std::vector<std::vector<float>> AutomatedCompressorExplorer::computeFitness(
                 eval.cachedFitness = cache->second.second;
                 continue;
             }
+        }
+        // A candidate that multiplies its input is not run: see
+        // kMaxStreamExpansion.
+        if (gene.maxStreamExpansion() > kMaxStreamExpansion) {
+            eval.cachedFitness = fitnessFromResult(gene, poly::nullopt);
+            continue;
         }
         // The gene's batch tasks share one compressor. Each task holds a
         // reference, so the compressor outlives this call if it throws.

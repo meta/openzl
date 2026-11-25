@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <numeric>
 #include <random>
 #include <string>
@@ -355,6 +356,131 @@ TEST_F(ACETest, InputBatchesKeepCompressedSize)
     ASSERT_EQ(batch.size(), genes.size());
     for (size_t i = 0; i < genes.size(); ++i) {
         EXPECT_EQ(batch[i][0], explorer.computeFitness(genes[i])[0])
+                << genes[i].prettyPrint();
+    }
+}
+
+namespace {
+ACECompressor storeCompressor()
+{
+    return ACECompressor(ACEGraph(graphs::Store{}));
+}
+
+/// @returns A pipeline that runs a bitunpack node for each of @p numBits in
+/// order, and stores the result.
+ACECompressor bitunpackChain(const std::vector<int>& numBits)
+{
+    auto compressor = storeCompressor();
+    for (auto it = numBits.rbegin(); it != numBits.rend(); ++it) {
+        compressor =
+                ACECompressor(ACENode(nodes::Bitunpack{ *it }), { compressor });
+    }
+    return compressor;
+}
+} // namespace
+
+TEST_F(ACETest, MaxStreamExpansion)
+{
+    // No node grows its input
+    EXPECT_EQ(storeCompressor().maxStreamExpansion(), 1.0);
+    const ACECompressor deltaFieldLz(
+            ACENode(nodes::DeltaInt{}),
+            { ACECompressor(ACEGraph(graphs::FieldLz{})) });
+    EXPECT_EQ(deltaFieldLz.maxStreamExpansion(), 1.0);
+    for (const auto type :
+         { Type::Serial, Type::Struct, Type::Numeric, Type::String }) {
+        for (const auto& prebuilt : getPrebuiltCompressors(type)) {
+            EXPECT_EQ(prebuilt.maxStreamExpansion(), 1.0)
+                    << prebuilt.prettyPrint();
+        }
+    }
+
+    // A single bitunpack writes one integer of 1, 2, 4 or 8 bytes per group
+    // of numBits bits
+    EXPECT_EQ(bitunpackChain({ 1 }).maxStreamExpansion(), 8.0);
+    EXPECT_EQ(bitunpackChain({ 4 }).maxStreamExpansion(), 2.0);
+    EXPECT_EQ(bitunpackChain({ 8 }).maxStreamExpansion(), 1.0);
+    EXPECT_EQ(bitunpackChain({ 12 }).maxStreamExpansion(), 16.0 / 12.0);
+    EXPECT_EQ(bitunpackChain({ 16 }).maxStreamExpansion(), 1.0);
+    EXPECT_EQ(bitunpackChain({ 24 }).maxStreamExpansion(), 32.0 / 24.0);
+    EXPECT_EQ(bitunpackChain({ 64 }).maxStreamExpansion(), 1.0);
+    EXPECT_LE(
+            bitunpackChain({ 1 }).maxStreamExpansion(),
+            AutomatedCompressorExplorer::kMaxStreamExpansion);
+
+    // Chained bitunpack nodes multiply
+    EXPECT_EQ(bitunpackChain({ 1, 1 }).maxStreamExpansion(), 64.0);
+    EXPECT_EQ(bitunpackChain({ 1, 1, 1 }).maxStreamExpansion(), 512.0);
+
+    // The largest branch counts, and nodes that keep the size do not reset it
+    const ACECompressor tokenize(
+            ACENode(nodes::TokenizeNumeric{ false }),
+            { bitunpackChain({ 1, 4 }), storeCompressor() });
+    EXPECT_EQ(tokenize.maxStreamExpansion(), 16.0);
+    const ACECompressor zigzagBetween(
+            ACENode(nodes::Bitunpack{ 1 }),
+            { ACECompressor(
+                    ACENode(nodes::Zigzag{}), { bitunpackChain({ 1 }) }) });
+    EXPECT_EQ(zigzagBetween.maxStreamExpansion(), 64.0);
+
+    // The shape of a candidate that took an ACE run on a 28 MB sample past
+    // 6 GB: crossover had repeated the same subtree, 12 nodes deep.
+    auto repeated =
+            ACECompressor(ACENode(nodes::RangePack{}), { storeCompressor() });
+    for (int i = 0; i < 2; ++i) {
+        for (const int numBits : { 1, 6, 1 }) {
+            repeated = ACECompressor(
+                    ACENode(nodes::Bitunpack{ numBits }), { repeated });
+        }
+        repeated = ACECompressor(
+                ACENode(nodes::ConvertStructToNumLE{}), { repeated });
+        repeated = ACECompressor(ACENode(nodes::Zigzag{}), { repeated });
+    }
+    EXPECT_GT(repeated.maxStreamExpansion(), 7000.0);
+    EXPECT_GT(
+            repeated.maxStreamExpansion(),
+            AutomatedCompressorExplorer::kMaxStreamExpansion);
+}
+
+TEST_F(ACETest, ExpandingCandidatesAreNotBenchmarked)
+{
+    // Small enough that every candidate below fits in memory, so that
+    // compressing it would succeed and give a finite fitness.
+    const std::vector<uint8_t> data(4096, 1);
+    const auto input = Input::refSerial(data.data(), data.size());
+    AutomatedCompressorExplorer explorer({ &input, 1 }, params);
+
+    const std::vector<ACECompressor> genes = {
+        storeCompressor(),           // 1x
+        bitunpackChain({ 1 }),       // 8x
+        bitunpackChain({ 1, 4 }),    // 16x, at the limit
+        bitunpackChain({ 1, 1 }),    // 64x
+        bitunpackChain({ 1, 1, 1 }), // 512x
+    };
+    const auto isFailure = [](const std::vector<float>& fitness) {
+        return std::all_of(fitness.begin(), fitness.end(), [](float f) {
+            return std::isinf(f);
+        });
+    };
+
+    // Every one of these candidates compresses the input when it is run
+    for (const auto& gene : genes) {
+        EXPECT_TRUE(gene.benchmark(
+                                { &input, 1 },
+                                params.formatVersion,
+                                params.compressionLevel)
+                            .has_value())
+                << gene.prettyPrint();
+    }
+
+    const auto batch = explorer.computeFitness(genes);
+    ASSERT_EQ(batch.size(), genes.size());
+    for (size_t i = 0; i < genes.size(); ++i) {
+        const bool overLimit = genes[i].maxStreamExpansion()
+                > AutomatedCompressorExplorer::kMaxStreamExpansion;
+        EXPECT_EQ(overLimit, i >= 3);
+        EXPECT_EQ(isFailure(batch[i]), overLimit) << genes[i].prettyPrint();
+        EXPECT_EQ(isFailure(explorer.computeFitness(genes[i])), overLimit)
                 << genes[i].prettyPrint();
     }
 }
