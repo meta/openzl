@@ -143,7 +143,7 @@ std::vector<ACECompressor> makePrebuiltNumericCompressors()
     ACECompressor quantizeOffsets(
             buildNode(nodes::QuantizeOffsets{}), { fse, store });
     ACECompressor quantizeLengths(
-            buildNode(nodes::QuantizeOffsets{}), { fse, store });
+            buildNode(nodes::QuantizeLengths{}), { fse, store });
     std::vector<ACECompressor> prebuilt = {
         transformer,
         fieldLz,
